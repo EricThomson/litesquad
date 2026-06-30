@@ -27,6 +27,7 @@ STAGE_LABEL: dict[Stage, str] = {
     "synthesize": "synthesizing",
 }
 QUIT_WORDS = {":quit", ":q", "quit", "exit"}
+SMOKE_PROMPT = "What is 1 + 1? Answer in one short sentence."
 
 
 class ConsoleReporter:
@@ -38,7 +39,7 @@ class ConsoleReporter:
 
     def stage_start(self, stage: Stage, role: str, model: str) -> None:
         self._status = console.status(
-            f"[bold]{role}[/] ({model}) — {STAGE_LABEL[stage]}…", spinner="dots"
+            f"[bold]{role}[/] ({model}) - {STAGE_LABEL[stage]}...", spinner="dots"
         )
         self._status.start()
 
@@ -49,9 +50,9 @@ class ConsoleReporter:
         if self.transcript_path is not None:
             with self.transcript_path.open("a", encoding="utf-8") as fh:
                 fh.write(event.to_jsonl() + "\n")
-        title = f"{event.role} · {event.model}"
+        title = f"{event.role} | {event.model}"
         if event.error:
-            console.print(Panel(event.error, title=f"{title} — error", border_style="red"))
+            console.print(Panel(event.error, title=f"{title} (error)", border_style="red"))
         else:
             border = "green" if event.stage == "synthesize" else "cyan"
             console.print(Panel(Markdown(event.output), title=title, border_style=border))
@@ -94,6 +95,9 @@ def run(
     check: bool = typer.Option(
         False, "--check", help="Ping each configured model with a tiny request and exit."
     ),
+    smoke: bool = typer.Option(
+        False, "--smoke", help="Run one real turn on a fixed tiny prompt and exit (cheap end-to-end)."
+    ),
 ) -> None:
     """Run the squad on TASK, then take interactive follow-ups."""
     load_env()
@@ -119,6 +123,27 @@ def run(
             raise typer.Exit(1) from exc
         console.print("Pinging configured models…")
         raise typer.Exit(0 if _check_models(config) else 1)
+
+    if smoke:
+        caller = mock_call_model if mock else call_model
+        if not mock:
+            try:
+                preflight(config)
+            except MissingKeysError as exc:
+                console.print(f"[red]{exc}[/]")
+                raise typer.Exit(1) from exc
+        console.print(f'Smoke test: one turn on [dim]"{SMOKE_PROMPT}"[/]\n')
+        transcript_path = _transcript_path(config.run.save_transcript)
+        reporter = ConsoleReporter(transcript_path)
+        try:
+            run_turn(Conversation(), SMOKE_PROMPT, config, reporter, caller=caller)
+        except Exception as exc:  # noqa: BLE001 - smoke surfaces ANY failure (call or save)
+            console.print(f"[red]Smoke test FAILED: {exc}[/]")
+            raise typer.Exit(1) from exc
+        if transcript_path is not None:
+            console.print(f"[dim]Transcript: {transcript_path}[/]")
+        console.print("[green]Smoke test passed - all stages produced output.[/]")
+        raise typer.Exit(0)
 
     if task is None:
         console.print('[red]Provide a task, e.g. litesquad "Plan my week", or use --check.[/]')

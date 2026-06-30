@@ -8,9 +8,9 @@ from litesquad.llm import LLMError
 from litesquad.models import Conversation
 
 
-def make_config(include_revision: bool = False) -> SquadConfig:
+def make_config() -> SquadConfig:
     return SquadConfig(
-        run=RunConfig(include_revision=include_revision, save_transcript=False),
+        run=RunConfig(save_transcript=False),
         pm=AgentConfig(model="anthropic/pm-model"),
         critic=AgentConfig(model="openai/critic-model"),
         workers=[AgentConfig(model="anthropic/worker-a"), AgentConfig(model="gemini/worker-b")],
@@ -30,27 +30,45 @@ def fake_call():
     return _fake
 
 
-def test_basic_flow_sequence(fake_call):
+def test_per_worker_flow_sequence(fake_call):
     conv = Conversation()
     turn = squad.run_turn(conv, "Plan my 12-week year", make_config(), caller=fake_call)
 
+    # frame, then propose->critique->revise per worker, then synthesize
     stages = [e.stage for e in turn.events]
-    assert stages == ["frame", "propose", "propose", "critique", "synthesize"]
+    assert stages == [
+        "frame",
+        "propose", "critique", "revise",
+        "propose", "critique", "revise",
+        "synthesize",
+    ]
     assert turn.final_answer == "pm::anthropic/pm-model output"
     assert conv.turns == [turn]
 
 
-def test_revision_adds_two_stages(fake_call):
+def test_critique_is_per_worker(fake_call):
     conv = Conversation()
-    turn = squad.run_turn(
-        conv, "Plan my 12-week year", make_config(include_revision=True), caller=fake_call
-    )
+    turn = squad.run_turn(conv, "Plan", make_config(), caller=fake_call)
 
-    stages = [e.stage for e in turn.events]
-    assert stages == ["frame", "propose", "propose", "critique", "revise", "revise", "synthesize"]
-    # worker roles are stable between propose and revise
-    revise_roles = [e.role for e in turn.events if e.stage == "revise"]
-    assert revise_roles == ["worker_1", "worker_2"]
+    # each worker gets its own critique, tagged with which worker it targets
+    critique_roles = [e.role for e in turn.events if e.stage == "critique"]
+    assert critique_roles == ["critic->worker_1", "critic->worker_2"]
+    # the critic model does every critique
+    critique_models = {e.model for e in turn.events if e.stage == "critique"}
+    assert critique_models == {"openai/critic-model"}
+    # propose and revise of a given worker share that worker's role + model
+    revise = [(e.role, e.model) for e in turn.events if e.stage == "revise"]
+    assert revise == [("worker_1", "anthropic/worker-a"), ("worker_2", "gemini/worker-b")]
+
+
+def test_synthesis_sees_revised_proposals(fake_call):
+    conv = Conversation()
+    squad.run_turn(conv, "Plan", make_config(), caller=fake_call)
+
+    synth_prompt = next(c["prompt"] for c in fake_call.calls if c["role"] == "pm" and "revised" in c["prompt"])
+    # the revised worker outputs (not the raw proposals) feed the synthesis
+    assert "worker_1::anthropic/worker-a output" in synth_prompt
+    assert "worker_2::gemini/worker-b output" in synth_prompt
 
 
 def test_followup_includes_prior_context(fake_call):
@@ -67,7 +85,7 @@ def test_followup_includes_prior_context(fake_call):
 
 def test_failed_stage_aborts_and_is_recorded():
     def _boom(model, messages, run_cfg, *, role=""):
-        if role == "critic":
+        if role.startswith("critic"):
             raise LLMError(role, model, "rate limited")
         return f"{role} output"
 
@@ -75,8 +93,8 @@ def test_failed_stage_aborts_and_is_recorded():
     with pytest.raises(LLMError):
         squad.run_turn(conv, "Plan", make_config(), caller=_boom)
 
-    # the failed turn is still recorded, with the error event and no final answer
+    # worker_1 proposes, then its critique fails — turn aborts, error recorded
     turn = conv.turns[0]
-    assert turn.events[-1].stage == "critique"
+    assert [e.stage for e in turn.events] == ["frame", "propose", "critique"]
     assert turn.events[-1].error and "rate limited" in turn.events[-1].error
     assert turn.final_answer is None

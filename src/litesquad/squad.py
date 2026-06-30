@@ -94,39 +94,36 @@ def run_turn(
         system=prompts.PM_SYSTEM, prompt=prompts.frame_prompt(task, history),
     )
 
-    worker_roles = [f"worker_{i + 1}" for i in range(len(config.workers))]
-    proposals = [
-        _run_stage(
+    # Each worker runs an independent propose -> critique -> revise loop: it
+    # proposes blind to the others, the critic critiques that one proposal, and
+    # the worker revises against its own critique. The PM synthesizes the revised set.
+    revised: list[str] = []
+    for i, worker in enumerate(config.workers):
+        role = f"worker_{i + 1}"
+        proposal = _run_stage(
             turn, reporter, run_cfg, caller,
             stage="propose", role=role, model=worker.model,
             system=prompts.WORKER_SYSTEM, prompt=prompts.propose_prompt(task, framing),
         )
-        for role, worker in zip(worker_roles, config.workers)
-    ]
-
-    critique = _run_stage(
-        turn, reporter, run_cfg, caller,
-        stage="critique", role="critic", model=config.critic.model,
-        system=prompts.CRITIC_SYSTEM,
-        prompt=prompts.critique_prompt(task, framing, proposals),
-    )
-
-    if run_cfg.include_revision:
-        proposals = [
-            _run_stage(
-                turn, reporter, run_cfg, caller,
-                stage="revise", role=role, model=worker.model,
-                system=prompts.WORKER_SYSTEM,
-                prompt=prompts.revise_prompt(task, framing, proposal, critique),
-            )
-            for role, worker, proposal in zip(worker_roles, config.workers, proposals)
-        ]
+        critique = _run_stage(
+            turn, reporter, run_cfg, caller,
+            stage="critique", role=f"critic->{role}", model=config.critic.model,
+            system=prompts.CRITIC_SYSTEM,
+            prompt=prompts.critique_prompt(task, framing, proposal),
+        )
+        revision = _run_stage(
+            turn, reporter, run_cfg, caller,
+            stage="revise", role=role, model=worker.model,
+            system=prompts.WORKER_SYSTEM,
+            prompt=prompts.revise_prompt(task, framing, proposal, critique),
+        )
+        revised.append(revision)
 
     _run_stage(
         turn, reporter, run_cfg, caller,
         stage="synthesize", role="pm", model=config.pm.model,
         system=prompts.PM_SYSTEM,
-        prompt=prompts.synthesize_prompt(task, framing, proposals, critique),
+        prompt=prompts.synthesize_prompt(task, framing, revised),
     )
 
     return turn

@@ -20,7 +20,6 @@ DEFAULT_CONFIG_TOML = """\
 # part of this on hidden reasoning before the visible answer, so keep it roomy.
 max_tokens = 8000
 save_transcript = true
-include_revision = false   # when true, each worker revises once after the critique
 # temperature is omitted by default: frontier models (Opus 4.7+, GPT-5, Fable 5)
 # reject it with a 400. Uncomment only if every model in your squad supports it
 # (e.g. Sonnet 4.6, Gemini, Opus 4.6 and earlier).
@@ -32,8 +31,9 @@ model = "anthropic/claude-opus-4-8"
 [agents.critic]
 model = "openai/gpt-5"
 
-# One [[agents.workers]] block per worker. Add or remove blocks freely;
-# each works independently (blind to the others).
+# One [[agents.workers]] block per worker. Add or remove blocks freely.
+# Each worker proposes blind to the others, gets its own critique from the
+# critic, and revises against it; the PM then synthesizes the revised set.
 [[agents.workers]]
 model = "anthropic/claude-sonnet-4-6"
 
@@ -50,7 +50,6 @@ class RunConfig(BaseModel):
     temperature: float | None = None
     max_tokens: int = 8000
     save_transcript: bool = True
-    include_revision: bool = False
 
 
 class SquadConfig(BaseModel):

@@ -20,6 +20,27 @@ PROVIDER_KEYS: dict[str, str] = {
 }
 
 
+# Map common non-ASCII typography to ASCII, then drop anything else, so model
+# output in real runs is plain ASCII (no em-dashes, curly quotes, ellipses, ...).
+_ASCII_MAP = str.maketrans({
+    "—": "-",    # em dash
+    "–": "-",    # en dash
+    "‘": "'",    # left single quote
+    "’": "'",    # right single quote / apostrophe
+    "“": '"',    # left double quote
+    "”": '"',    # right double quote
+    "…": "...",  # horizontal ellipsis
+    " ": " ",    # non-breaking space
+    "•": "-",    # bullet
+    "→": "->",   # rightwards arrow
+})
+
+
+def to_ascii(text: str) -> str:
+    """Coerce text to plain ASCII: map common typography, drop the rest."""
+    return text.translate(_ASCII_MAP).encode("ascii", "ignore").decode("ascii")
+
+
 class LLMError(RuntimeError):
     """A model call failed. Carries the role and model for clear reporting."""
 
@@ -95,4 +116,4 @@ def call_model(model: str, messages: list[dict], run_cfg: RunConfig, *, role: st
     content = response.choices[0].message.content
     if not content:
         raise LLMError(role, model, "model returned an empty response")
-    return content
+    return to_ascii(content)

@@ -13,7 +13,7 @@ To run the default with workers from different vendors, you will need API keys f
 
 
 Default: 
-Opus is the PM, feeds info to two workers that work independently (defaults to sonnet, gemini), and then critic model analyzes both proposals (gpt 5). Finally, opus synthesizes all of the above into a final answer. 
+Opus is the PM, feeds info to three workers (from gemini, claude, and openai) that work independently, and then critic model (gpt5) analyzes their answers, gives them a chance to update, and their updated answer is given to the PM to synthesize the results and give user the final answer (opus is the PM).
 
 
 ## Testing 
