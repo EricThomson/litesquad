@@ -37,7 +37,7 @@ model = "openai/gpt-5"
 model = "anthropic/claude-sonnet-4-6"
 
 [[agents.workers]]
-model = "openai/gpt-4o"
+model = "openai/gpt-4.1-mini"
 instructions = "Write in tight prose. Use at most a few bullets, only for genuinely list-like content, and never a step-by-step plan for a simple ask. Cut filler and preamble."
 
 [[agents.workers]]

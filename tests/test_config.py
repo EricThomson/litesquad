@@ -18,12 +18,12 @@ def test_default_squad():
     assert config.critic.model == "openai/gpt-5"
     assert [w.model for w in config.workers] == [
         "anthropic/claude-sonnet-4-6",
-        "openai/gpt-4o",
+        "openai/gpt-4.1-mini",
         "gemini/gemini-2.5-pro",
     ]
-    # gpt-4o ships tamed by default
-    gpt4o = next(w for w in config.workers if w.model == "openai/gpt-4o")
-    assert gpt4o.instructions and "prose" in gpt4o.instructions
+    # the openai worker ships tamed by default
+    openai_worker = next(w for w in config.workers if w.model == "openai/gpt-4.1-mini")
+    assert openai_worker.instructions and "prose" in openai_worker.instructions
 
 
 def test_missing_file_uses_defaults(tmp_path):
