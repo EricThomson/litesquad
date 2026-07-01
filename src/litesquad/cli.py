@@ -14,17 +14,17 @@ from . import paths
 from .config import RunConfig, SquadConfig, ensure_starter, load_config
 from .llm import LLMError, MissingKeysError, call_model, load_env, mock_call_model, preflight
 from .models import Conversation, Stage, TranscriptEvent
-from .squad import run_turn
+from .squad import run_quick, run_turn
 
-app = typer.Typer(add_completion=False, help="Run a small squad of LLMs on a planning task.")
+app = typer.Typer(add_completion=False, help="Ask a small ensemble of LLMs anything.")
 console = Console()
 
 STAGE_LABEL: dict[Stage, str] = {
-    "frame": "framing",
-    "propose": "proposing",
+    "propose": "responding",
     "critique": "critiquing",
     "revise": "revising",
-    "synthesize": "synthesizing",
+    "synthesize": "judging",
+    "reply": "answering",
 }
 QUIT_WORDS = {":quit", ":q", "quit", "exit"}
 SMOKE_PROMPT = "What is 1 + 1? Answer in one short sentence."
@@ -54,7 +54,7 @@ class ConsoleReporter:
         if event.error:
             console.print(Panel(event.error, title=f"{title} (error)", border_style="red"))
         else:
-            border = "green" if event.stage == "synthesize" else "cyan"
+            border = "green" if event.stage in ("synthesize", "reply") else "cyan"
             console.print(Panel(Markdown(event.output), title=title, border_style=border))
 
 
@@ -88,7 +88,10 @@ def _check_models(config: SquadConfig) -> bool:
 
 @app.command()
 def run(
-    task: str = typer.Argument(None, help="The task for the squad to work on."),
+    task: str = typer.Argument(None, help="Your question or task for the ensemble."),
+    quick: bool = typer.Option(
+        False, "--quick", help="Talk to just the judge (Opus), skipping the ensemble."
+    ),
     mock: bool = typer.Option(
         False, "--mock", help="Use canned offline responses; no API keys needed."
     ),
@@ -99,7 +102,7 @@ def run(
         False, "--smoke", help="Run one real turn on a fixed tiny prompt and exit (cheap end-to-end)."
     ),
 ) -> None:
-    """Run the squad on TASK, then take interactive follow-ups."""
+    """Ask the ensemble (or, with --quick, just the judge), then take follow-ups."""
     load_env()
 
     cfg_path = paths.config_path()
@@ -157,11 +160,14 @@ def run(
     conversation = Conversation()
     transcript_path = _transcript_path(config.run.save_transcript)
     reporter = ConsoleReporter(transcript_path)
+    run_one = run_quick if quick else run_turn
+    if quick:
+        console.print("[dim]Quick mode: just the judge, no ensemble.[/]")
 
     current_task = task
     while True:
         try:
-            run_turn(conversation, current_task, config, reporter, caller=caller)
+            run_one(conversation, current_task, config, reporter, caller=caller)
         except LLMError as exc:
             console.print(f"[red]Turn aborted: {exc}[/]")
 

@@ -24,15 +24,16 @@ save_transcript = true
 # Set it only if every model in your squad supports it (Sonnet, Gemini, Opus 4.6-).
 # temperature = 0.4
 
-[agents.pm]
+# The judge hears the workers, weighs them, and renders the final answer.
+[agents.judge]
 model = "anthropic/claude-opus-4-8"
 
 [agents.critic]
 model = "openai/gpt-5"
 
-# Each worker proposes blind to the others, gets its own critique from the critic,
-# and revises against it; the PM synthesizes the revised set. Any agent may add an
-# `instructions` string that is appended to its system prompt.
+# Each worker responds independently (blind to the others), the critic gives each
+# one feedback, the worker revises, and the judge renders the final answer. Any
+# agent may add an `instructions` string that is appended to its system prompt.
 [[agents.workers]]
 model = "anthropic/claude-sonnet-4-6"
 
@@ -65,14 +66,14 @@ class RunConfig(BaseModel):
 
 class SquadConfig(BaseModel):
     run: RunConfig = Field(default_factory=RunConfig)
-    pm: AgentConfig
+    judge: AgentConfig
     critic: AgentConfig
     workers: list[AgentConfig] = Field(min_length=1)
 
     def models(self) -> list[str]:
         """Every distinct model string referenced by the squad."""
         seen: list[str] = []
-        for model in [self.pm.model, self.critic.model, *(w.model for w in self.workers)]:
+        for model in [self.judge.model, self.critic.model, *(w.model for w in self.workers)]:
             if model not in seen:
                 seen.append(model)
         return seen
@@ -83,7 +84,7 @@ def _build(raw: dict) -> SquadConfig:
     agents = raw.get("agents", {})
     return SquadConfig(
         run=raw.get("run", {}),
-        pm=agents.get("pm", {}),
+        judge=agents.get("judge", {}),
         critic=agents.get("critic", {}),
         workers=agents.get("workers", []),
     )
@@ -97,7 +98,7 @@ def default_config() -> SquadConfig:
 def _merge(defaults: dict, overrides: dict) -> dict:
     """Shallow-merge user overrides onto the default raw config.
 
-    ``run`` keys merge individually; a provided pm/critic replaces that agent; a
+    ``run`` keys merge individually; a provided judge/critic replaces that agent; a
     provided (non-empty) workers list replaces the default workers. Nothing deeper.
     """
     d_agents = defaults.get("agents", {})
@@ -105,7 +106,7 @@ def _merge(defaults: dict, overrides: dict) -> dict:
     return {
         "run": {**defaults.get("run", {}), **overrides.get("run", {})},
         "agents": {
-            "pm": o_agents.get("pm") or d_agents.get("pm", {}),
+            "judge": o_agents.get("judge") or d_agents.get("judge", {}),
             "critic": o_agents.get("critic") or d_agents.get("critic", {}),
             "workers": o_agents.get("workers") or d_agents.get("workers", []),
         },

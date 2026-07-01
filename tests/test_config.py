@@ -14,7 +14,7 @@ from litesquad.llm import MissingKeysError, preflight
 
 def test_default_squad():
     config = default_config()
-    assert config.pm.model == "anthropic/claude-opus-4-8"
+    assert config.judge.model == "anthropic/claude-opus-4-8"
     assert config.critic.model == "openai/gpt-5"
     assert [w.model for w in config.workers] == [
         "anthropic/claude-sonnet-4-6",
@@ -45,7 +45,7 @@ def test_override_replaces_workers(tmp_path):
     config = load_config(cfg_path)
     assert [w.model for w in config.workers] == ["anthropic/only-me"]
     # unspecified pieces still track the default
-    assert config.pm.model == default_config().pm.model
+    assert config.judge.model == default_config().judge.model
 
 
 def test_override_run_key_merges(tmp_path):
@@ -58,7 +58,7 @@ def test_override_run_key_merges(tmp_path):
 
 def test_models_are_deduplicated():
     config = SquadConfig(
-        pm=AgentConfig(model="anthropic/x"),
+        judge=AgentConfig(model="anthropic/x"),
         critic=AgentConfig(model="anthropic/x"),
         workers=[AgentConfig(model="anthropic/x")],
     )

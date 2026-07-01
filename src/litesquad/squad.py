@@ -1,7 +1,9 @@
-"""Fixed-flow orchestration: frame -> propose -> critique -> (revise) -> synthesize.
+"""Orchestration.
 
-Rendering-agnostic: progress is reported through a :class:`Reporter` so this
-module never imports ``rich``.
+Deep turn: each worker responds independently, the critic critiques each response,
+the worker revises, and the judge renders the single final answer. Quick turn: the
+judge answers directly, no ensemble. Rendering-agnostic: progress is reported
+through a :class:`Reporter` so this module never imports ``rich``.
 """
 
 from typing import Callable, Protocol
@@ -15,6 +17,7 @@ from .models import Conversation, Stage, TranscriptEvent, Turn
 def _system(base: str, agent: AgentConfig) -> str:
     """Append an agent's optional per-config instructions to its base prompt."""
     return f"{base} {agent.instructions}" if agent.instructions else base
+
 
 # A model caller: same signature as litellm-backed ``call_model``. Injectable so
 # the CLI can run a mock (offline) squad without provider credentials.
@@ -83,7 +86,7 @@ def run_turn(
     *,
     caller: Caller = call_model,
 ) -> Turn:
-    """Run one full squad turn, appending it to ``conversation``.
+    """Run one full ensemble turn, appending it to ``conversation``.
 
     ``caller`` defaults to the real LiteLLM-backed model call; inject a stand-in
     (e.g. ``mock_call_model``) to run offline.
@@ -93,15 +96,9 @@ def run_turn(
     history = conversation.history_digest()
     turn = conversation.new_turn(task)
 
-    framing = _run_stage(
-        turn, reporter, run_cfg, caller,
-        stage="frame", role="pm", model=config.pm.model,
-        system=_system(prompts.PM_SYSTEM, config.pm), prompt=prompts.frame_prompt(task, history),
-    )
-
-    # Each worker runs an independent propose -> critique -> revise loop: it
-    # proposes blind to the others, the critic critiques that one proposal, and
-    # the worker revises against its own critique. The PM synthesizes the revised set.
+    # Each worker responds independently (blind to the others), the critic critiques
+    # that one response, and the worker revises against its own critique. The judge
+    # then weighs the revised responses and renders the final answer.
     revised: list[str] = []
     for i, worker in enumerate(config.workers):
         role = f"worker_{i + 1}"
@@ -109,27 +106,50 @@ def run_turn(
             turn, reporter, run_cfg, caller,
             stage="propose", role=role, model=worker.model,
             system=_system(prompts.WORKER_SYSTEM, worker),
-            prompt=prompts.propose_prompt(task, framing),
+            prompt=prompts.propose_prompt(task, history),
         )
         critique = _run_stage(
             turn, reporter, run_cfg, caller,
             stage="critique", role=f"critic->{role}", model=config.critic.model,
             system=_system(prompts.CRITIC_SYSTEM, config.critic),
-            prompt=prompts.critique_prompt(task, framing, proposal),
+            prompt=prompts.critique_prompt(task, proposal),
         )
         revision = _run_stage(
             turn, reporter, run_cfg, caller,
             stage="revise", role=role, model=worker.model,
             system=_system(prompts.WORKER_SYSTEM, worker),
-            prompt=prompts.revise_prompt(task, framing, proposal, critique),
+            prompt=prompts.revise_prompt(task, proposal, critique),
         )
         revised.append(revision)
 
     _run_stage(
         turn, reporter, run_cfg, caller,
-        stage="synthesize", role="pm", model=config.pm.model,
-        system=_system(prompts.PM_SYSTEM, config.pm),
-        prompt=prompts.synthesize_prompt(task, framing, revised),
+        stage="synthesize", role="judge", model=config.judge.model,
+        system=_system(prompts.JUDGE_SYSTEM, config.judge),
+        prompt=prompts.synthesize_prompt(task, revised, history),
+    )
+
+    return turn
+
+
+def run_quick(
+    conversation: Conversation,
+    task: str,
+    config: SquadConfig,
+    reporter: Reporter | None = None,
+    *,
+    caller: Caller = call_model,
+) -> Turn:
+    """Run one quick turn: the judge model answers directly, no ensemble."""
+    reporter = reporter or NullReporter()
+    history = conversation.history_digest()
+    turn = conversation.new_turn(task)
+
+    _run_stage(
+        turn, reporter, config.run, caller,
+        stage="reply", role="judge", model=config.judge.model,
+        system=_system(prompts.QUICK_SYSTEM, config.judge),
+        prompt=prompts.quick_prompt(task, history),
     )
 
     return turn

@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-Stage = Literal["frame", "propose", "critique", "revise", "synthesize"]
+Stage = Literal["propose", "critique", "revise", "synthesize", "reply"]
 
 
 def _now() -> str:
@@ -37,8 +37,9 @@ class Turn(BaseModel):
 
     @property
     def final_answer(self) -> str | None:
+        # deep turns end in "synthesize", quick turns in "reply"
         for event in reversed(self.events):
-            if event.stage == "synthesize" and not event.error:
+            if event.stage in ("synthesize", "reply") and not event.error:
                 return event.output
         return None
 
@@ -52,9 +53,9 @@ class Conversation(BaseModel):
         return turn
 
     def history_digest(self) -> str:
-        """Compact prior task/final-answer pairs, for follow-up framing."""
+        """Compact prior message/answer pairs, for follow-up context."""
         parts: list[str] = []
         for turn in self.turns:
             if turn.final_answer:
-                parts.append(f"Earlier task: {turn.task}\nFinal answer: {turn.final_answer}")
+                parts.append(f"User: {turn.task}\nAnswer: {turn.final_answer}")
         return "\n\n".join(parts)
