@@ -1,27 +1,63 @@
-"""Config load/default and preflight key-checking tests."""
+"""Config tests: authoritative defaults, override merge, commented starter."""
 
 import pytest
 
-from litesquad.config import SquadConfig, ensure_config, load_config
+from litesquad.config import (
+    AgentConfig,
+    SquadConfig,
+    default_config,
+    ensure_starter,
+    load_config,
+)
 from litesquad.llm import MissingKeysError, preflight
 
 
-def test_default_config_roundtrips(tmp_path):
-    cfg_path = tmp_path / "config.toml"
-    assert not cfg_path.exists()
-    ensure_config(cfg_path)
-    assert cfg_path.exists()
+def test_default_squad():
+    config = default_config()
+    assert config.pm.model == "anthropic/claude-opus-4-8"
+    assert config.critic.model == "openai/gpt-5"
+    assert [w.model for w in config.workers] == [
+        "anthropic/claude-sonnet-4-6",
+        "openai/gpt-4o",
+        "gemini/gemini-2.5-pro",
+    ]
+    # gpt-4o ships tamed by default
+    gpt4o = next(w for w in config.workers if w.model == "openai/gpt-4o")
+    assert gpt4o.instructions and "prose" in gpt4o.instructions
 
+
+def test_missing_file_uses_defaults(tmp_path):
+    config = load_config(tmp_path / "nope.toml")
+    assert config.model_dump() == default_config().model_dump()
+
+
+def test_starter_is_all_defaults(tmp_path):
+    cfg_path = tmp_path / "config.toml"
+    assert ensure_starter(cfg_path) is True
+    assert ensure_starter(cfg_path) is False  # already there, not rewritten
+    # a fresh starter is fully commented, so it resolves to the defaults
+    assert load_config(cfg_path).model_dump() == default_config().model_dump()
+
+
+def test_override_replaces_workers(tmp_path):
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text('[[agents.workers]]\nmodel = "anthropic/only-me"\n', encoding="utf-8")
     config = load_config(cfg_path)
-    assert isinstance(config, SquadConfig)
-    assert len(config.workers) == 2
-    assert config.pm.model.startswith("anthropic/")
+    assert [w.model for w in config.workers] == ["anthropic/only-me"]
+    # unspecified pieces still track the default
+    assert config.pm.model == default_config().pm.model
+
+
+def test_override_run_key_merges(tmp_path):
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text("[run]\nmax_tokens = 123\n", encoding="utf-8")
+    config = load_config(cfg_path)
+    assert config.run.max_tokens == 123
+    assert config.run.save_transcript is True  # untouched default
 
 
 def test_models_are_deduplicated():
-    from litesquad.config import AgentConfig, SquadConfig as SC
-
-    config = SC(
+    config = SquadConfig(
         pm=AgentConfig(model="anthropic/x"),
         critic=AgentConfig(model="anthropic/x"),
         workers=[AgentConfig(model="anthropic/x")],
@@ -29,20 +65,15 @@ def test_models_are_deduplicated():
     assert config.models() == ["anthropic/x"]
 
 
-def test_preflight_reports_missing_keys(tmp_path, monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    config = load_config(ensure_config(tmp_path / "config.toml"))
-
+def test_preflight_reports_missing_keys(monkeypatch):
+    for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
     with pytest.raises(MissingKeysError) as exc:
-        preflight(config)
+        preflight(default_config())
     assert "ANTHROPIC_API_KEY" in str(exc.value)
 
 
-def test_preflight_passes_when_keys_present(tmp_path, monkeypatch):
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
-    monkeypatch.setenv("OPENAI_API_KEY", "x")
-    monkeypatch.setenv("GEMINI_API_KEY", "x")
-    config = load_config(ensure_config(tmp_path / "config.toml"))
-    preflight(config)  # should not raise
+def test_preflight_passes_when_keys_present(monkeypatch):
+    for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"):
+        monkeypatch.setenv(var, "x")
+    preflight(default_config())  # should not raise

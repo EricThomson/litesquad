@@ -11,7 +11,7 @@ from rich.prompt import Prompt
 from rich.status import Status
 
 from . import paths
-from .config import RunConfig, SquadConfig, ensure_config, load_config
+from .config import RunConfig, SquadConfig, ensure_starter, load_config
 from .llm import LLMError, MissingKeysError, call_model, load_env, mock_call_model, preflight
 from .models import Conversation, Stage, TranscriptEvent
 from .squad import run_turn
@@ -103,16 +103,10 @@ def run(
     load_env()
 
     cfg_path = paths.config_path()
-    first_run = not cfg_path.exists()
-    ensure_config(cfg_path)
-    if first_run and not mock:
+    if ensure_starter(cfg_path):
         console.print(
-            f"Created a default config at [bold]{cfg_path}[/].\n"
-            "Edit your models there and make sure your API keys are set "
-            "(environment or a .env file), then re-run."
+            f"[dim]Wrote a starter config (all defaults, commented) you can edit at {cfg_path}[/]"
         )
-        raise typer.Exit(0)
-
     config = load_config(cfg_path)
 
     if check:

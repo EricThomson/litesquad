@@ -10,14 +10,16 @@ ASCII_RULE = (
 
 PM_SYSTEM = (
     "You are the PM of a small squad solving planning and design problems. "
-    "You are concrete, practical, and allergic to overengineering."
+    "You are practical and avoid overengineering."
 ) + ASCII_RULE
+
 WORKER_SYSTEM = (
-    "You are a worker on a small squad. You propose one concrete, actionable plan "
-    "or solution. Be specific and realistic; prefer the simplest thing that works."
+    "You are one worker on a small squad. Your job is to answer a question or propose "
+    "a solution to a problem. Be specific, realistic, and prefer the simplest thing that works."
 ) + ASCII_RULE
+
 CRITIC_SYSTEM = (
-    "You are a Critic. You stress-test proposals, focusing on weak assumptions, "
+    "You are a Critic. You stress-test answers, focusing on weak assumptions, "
     "overengineering, missing steps, and practical risks. Be direct and useful, not pedantic. "
     "If a proposal is genuinely strong, say so plainly instead of inventing problems."
 ) + ASCII_RULE
@@ -27,7 +29,7 @@ def frame_prompt(task: str, history: str = "") -> str:
     context = f"\n\nPrior context from this session:\n{history}\n" if history else ""
     return (
         f"The user's task:\n{task}\n{context}\n"
-        "Frame this task for the squad. Restate the real goal in your own words, "
+        "Frame this task for the squad. Restate the main goal in your own words, "
         "list the key sub-questions, constraints, and the criteria a good answer must meet. "
         "Keep it tight."
     )
@@ -48,9 +50,9 @@ def critique_prompt(task: str, framing: str, proposal: str) -> str:
         f"The PM's framing:\n{framing}\n\n"
         f"The proposal to review:\n{proposal}\n\n"
         "Critique this proposal on its own terms. Call out weak assumptions, overengineering, "
-        "missing steps, and practical risks. If it is already strong, say so plainly rather than "
+        "missing steps, or practical risks. If it is already strong, say so plainly rather than "
         "manufacturing problems. Otherwise, end with the few concrete changes that would most "
-        "improve it, specific enough that the author can act on them directly."
+        "improve it, suggestions that are specific enough that the author can act on them directly."
     )
 
 
@@ -60,8 +62,8 @@ def revise_prompt(task: str, framing: str, own_proposal: str, critique: str) -> 
         f"The PM's framing:\n{framing}\n\n"
         f"Your earlier proposal:\n{own_proposal}\n\n"
         f"The Critic's review:\n{critique}\n\n"
-        "Revise your proposal once in light of the critique. Keep what holds up, fix what doesn't, "
-        "and stay concrete. If the critique found little or nothing to change, light edits or "
+        "Revise your proposal once in light of the critique. Keep what holds up, fix what doesn't. "
+        "If the critique found little or nothing to change, light edits or "
         "leaving it as is are both fine."
     )
 
@@ -73,7 +75,7 @@ def synthesize_prompt(task: str, framing: str, proposals: list[str]) -> str:
         f"The PM's framing:\n{framing}\n\n"
         f"{blocks}\n\n"
         "Each proposal above was independently critiqued and then revised by its author. "
-        "Synthesize the single best answer for the user: resolve any disagreements between them, "
-        "take the strongest ideas from each, and deliver a clear, actionable result. This is what "
-        "the user reads, so make it self-contained."
+        "Synthesize a coherent single answer for the user that incorporates "
+        "the best ideas from all the workers. This is what "
+        "the user reads, so make sure it is self-contained."
     )

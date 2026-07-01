@@ -1,7 +1,8 @@
-"""Typed configuration loaded from a user-editable ``config.toml``.
+"""Typed configuration: good defaults in code, user overrides from ~/.litesquad.
 
-On first run the default template below is written to
-:func:`litesquad.paths.config_path` and the path is reported to the user.
+The defaults below are authoritative and versioned. On load, an optional user
+config at :func:`litesquad.paths.config_path` is shallow-merged on top, so the
+user's file only needs the handful of things they want to change.
 """
 
 import tomllib
@@ -12,17 +13,15 @@ from pydantic import BaseModel, Field
 from . import paths
 
 DEFAULT_CONFIG_TOML = """\
-# litesquad configuration. Models are LiteLLM model strings
-# (e.g. "anthropic/claude-sonnet-4-6", "openai/gpt-5", "gemini/gemini-2.5-pro").
+# litesquad default squad. Models are LiteLLM model strings.
 
 [run]
-# Caps output per stage. The reasoning models (GPT-5, Gemini 2.5 Pro) spend
-# part of this on hidden reasoning before the visible answer, so keep it roomy.
+# Caps output per stage. Reasoning models (GPT-5, Gemini 2.5 Pro) spend part of
+# this on hidden reasoning before the visible answer, so keep it roomy.
 max_tokens = 8000
 save_transcript = true
-# temperature is omitted by default: frontier models (Opus 4.7+, GPT-5, Fable 5)
-# reject it with a 400. Uncomment only if every model in your squad supports it
-# (e.g. Sonnet 4.6, Gemini, Opus 4.6 and earlier).
+# temperature is omitted: frontier models (Opus 4.7+, GPT-5) reject it with a 400.
+# Set it only if every model in your squad supports it (Sonnet, Gemini, Opus 4.6-).
 # temperature = 0.4
 
 [agents.pm]
@@ -31,17 +30,25 @@ model = "anthropic/claude-opus-4-8"
 [agents.critic]
 model = "openai/gpt-5"
 
-# One [[agents.workers]] block per worker. Add or remove blocks freely.
-# Each worker proposes blind to the others, gets its own critique from the
-# critic, and revises against it; the PM then synthesizes the revised set.
-# Any agent (pm, critic, or a worker) may add an optional `instructions` string
-# that is appended to its system prompt - tune one model without touching the
-# others, e.g. instructions = "Write tight prose; avoid bullet spam."
+# Each worker proposes blind to the others, gets its own critique from the critic,
+# and revises against it; the PM synthesizes the revised set. Any agent may add an
+# `instructions` string that is appended to its system prompt.
 [[agents.workers]]
 model = "anthropic/claude-sonnet-4-6"
 
 [[agents.workers]]
+model = "openai/gpt-4o"
+instructions = "Write in tight prose. Use at most a few bullets, only for genuinely list-like content, and never a step-by-step plan for a simple ask. Cut filler and preamble."
+
+[[agents.workers]]
 model = "gemini/gemini-2.5-pro"
+"""
+
+_STARTER_HEADER = """\
+# litesquad overrides. This file mirrors the built-in defaults, fully commented.
+# Uncomment and edit a line to override that default; anything left commented
+# keeps following the library default, so you only carry the deltas you care about.
+
 """
 
 
@@ -71,23 +78,8 @@ class SquadConfig(BaseModel):
         return seen
 
 
-def ensure_config(path: Path | None = None) -> Path:
-    """Write the default config if none exists. Returns the config path."""
-    cfg_path = path or paths.config_path()
-    if not cfg_path.exists():
-        cfg_path.parent.mkdir(parents=True, exist_ok=True)
-        cfg_path.write_text(DEFAULT_CONFIG_TOML, encoding="utf-8")
-    return cfg_path
-
-
-def load_config(path: Path | None = None) -> SquadConfig:
-    """Load and validate config from TOML.
-
-    The ``[agents]`` table is flattened into the top-level model: ``pm``,
-    ``critic`` and ``workers`` are read from ``[agents.*]``.
-    """
-    cfg_path = path or paths.config_path()
-    raw = tomllib.loads(cfg_path.read_text(encoding="utf-8"))
+def _build(raw: dict) -> SquadConfig:
+    """Build a SquadConfig from a raw TOML dict (flattening [agents.*])."""
     agents = raw.get("agents", {})
     return SquadConfig(
         run=raw.get("run", {}),
@@ -95,3 +87,58 @@ def load_config(path: Path | None = None) -> SquadConfig:
         critic=agents.get("critic", {}),
         workers=agents.get("workers", []),
     )
+
+
+def default_config() -> SquadConfig:
+    """The authoritative, versioned default squad."""
+    return _build(tomllib.loads(DEFAULT_CONFIG_TOML))
+
+
+def _merge(defaults: dict, overrides: dict) -> dict:
+    """Shallow-merge user overrides onto the default raw config.
+
+    ``run`` keys merge individually; a provided pm/critic replaces that agent; a
+    provided (non-empty) workers list replaces the default workers. Nothing deeper.
+    """
+    d_agents = defaults.get("agents", {})
+    o_agents = overrides.get("agents", {})
+    return {
+        "run": {**defaults.get("run", {}), **overrides.get("run", {})},
+        "agents": {
+            "pm": o_agents.get("pm") or d_agents.get("pm", {}),
+            "critic": o_agents.get("critic") or d_agents.get("critic", {}),
+            "workers": o_agents.get("workers") or d_agents.get("workers", []),
+        },
+    }
+
+
+def load_config(path: Path | None = None) -> SquadConfig:
+    """Load the default squad, with any user overrides merged on top."""
+    defaults = tomllib.loads(DEFAULT_CONFIG_TOML)
+    cfg_path = path or paths.config_path()
+    if cfg_path.exists():
+        overrides = tomllib.loads(cfg_path.read_text(encoding="utf-8"))
+        return _build(_merge(defaults, overrides))
+    return _build(defaults)
+
+
+def _commented_starter() -> str:
+    """The defaults rendered as an all-commented override file."""
+    lines = []
+    for line in DEFAULT_CONFIG_TOML.splitlines():
+        stripped = line.lstrip()
+        if stripped == "" or stripped.startswith("#"):
+            lines.append(line)
+        else:
+            lines.append(f"# {line}")
+    return _STARTER_HEADER + "\n".join(lines) + "\n"
+
+
+def ensure_starter(path: Path | None = None) -> bool:
+    """Write the commented starter override if none exists. True if it was written."""
+    cfg_path = path or paths.config_path()
+    if cfg_path.exists():
+        return False
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg_path.write_text(_commented_starter(), encoding="utf-8")
+    return True

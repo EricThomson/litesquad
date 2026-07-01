@@ -21,4 +21,9 @@ To see if api keys are working (from activated env):
 
     python -m litesquad.check_keys
 
+Check on specific models:
     litesquad --check 
+
+
+### To do
+Allow "pm only" option so you don't have to invoke entire 11-call machinery for every query. 
