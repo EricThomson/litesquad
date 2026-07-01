@@ -1,7 +1,7 @@
 # lite squad
-Lightweight cli tool for multiple LLM collaboration.
+Lightweight cli tool for collaborating with a little squad of LLMs. 
 
-One acts as a project manager who assigns a task to other LLMs. Another acts as a critic. The PM then summarizes, integrates the information and feeds it back to you. 
+One LLM acts as a project manager who assigns a task to some worker LLMs. Another acts as a critic that gives feedback to the workers. They revise their resspond. The PM then generates an integrated reply for the user. 
 
 ## Usage
 Install, and then use, at your command line:
@@ -12,8 +12,10 @@ Install, and then use, at your command line:
 To run the default with workers from different vendors, you will need API keys for [Gemini](https://aistudio.google.com/app/apikey), [OpenAI](https://openai.com/index/openai-api/), and [Anthropic](https://platform.claude.com/docs/en/api/admin/api_keys/retrieve). Store your api keys in .env (or whatever). 
 
 
-Default: 
-Opus is the PM, feeds info to three workers (from gemini, claude, and openai) that work independently, and then critic model (gpt5) analyzes their answers, gives them a chance to update, and their updated answer is given to the PM to synthesize the results and give user the final answer (opus is the PM).
+### Default settings 
+Opus is the PM, feeds info to three workers (from gemini, claude, and openai) that work independently, and then critic model (gpt5) analyzes their answers, gives them a chance to update.
+
+Their updated answers are given to the PM to synthesize the results into a single coherent answer.
 
 
 ## Testing 
