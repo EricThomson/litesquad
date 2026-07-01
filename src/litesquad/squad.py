@@ -7,9 +7,14 @@ module never imports ``rich``.
 from typing import Callable, Protocol
 
 from . import prompts
-from .config import RunConfig, SquadConfig
+from .config import AgentConfig, RunConfig, SquadConfig
 from .llm import call_model
 from .models import Conversation, Stage, TranscriptEvent, Turn
+
+
+def _system(base: str, agent: AgentConfig) -> str:
+    """Append an agent's optional per-config instructions to its base prompt."""
+    return f"{base} {agent.instructions}" if agent.instructions else base
 
 # A model caller: same signature as litellm-backed ``call_model``. Injectable so
 # the CLI can run a mock (offline) squad without provider credentials.
@@ -91,7 +96,7 @@ def run_turn(
     framing = _run_stage(
         turn, reporter, run_cfg, caller,
         stage="frame", role="pm", model=config.pm.model,
-        system=prompts.PM_SYSTEM, prompt=prompts.frame_prompt(task, history),
+        system=_system(prompts.PM_SYSTEM, config.pm), prompt=prompts.frame_prompt(task, history),
     )
 
     # Each worker runs an independent propose -> critique -> revise loop: it
@@ -103,18 +108,19 @@ def run_turn(
         proposal = _run_stage(
             turn, reporter, run_cfg, caller,
             stage="propose", role=role, model=worker.model,
-            system=prompts.WORKER_SYSTEM, prompt=prompts.propose_prompt(task, framing),
+            system=_system(prompts.WORKER_SYSTEM, worker),
+            prompt=prompts.propose_prompt(task, framing),
         )
         critique = _run_stage(
             turn, reporter, run_cfg, caller,
             stage="critique", role=f"critic->{role}", model=config.critic.model,
-            system=prompts.CRITIC_SYSTEM,
+            system=_system(prompts.CRITIC_SYSTEM, config.critic),
             prompt=prompts.critique_prompt(task, framing, proposal),
         )
         revision = _run_stage(
             turn, reporter, run_cfg, caller,
             stage="revise", role=role, model=worker.model,
-            system=prompts.WORKER_SYSTEM,
+            system=_system(prompts.WORKER_SYSTEM, worker),
             prompt=prompts.revise_prompt(task, framing, proposal, critique),
         )
         revised.append(revision)
@@ -122,7 +128,7 @@ def run_turn(
     _run_stage(
         turn, reporter, run_cfg, caller,
         stage="synthesize", role="pm", model=config.pm.model,
-        system=prompts.PM_SYSTEM,
+        system=_system(prompts.PM_SYSTEM, config.pm),
         prompt=prompts.synthesize_prompt(task, framing, revised),
     )
 

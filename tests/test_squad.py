@@ -71,6 +71,23 @@ def test_synthesis_sees_revised_proposals(fake_call):
     assert "worker_2::gemini/worker-b output" in synth_prompt
 
 
+def test_per_agent_instructions_scoped_to_that_agent():
+    captured: list[tuple[str, str]] = []
+
+    def cap(model, messages, run_cfg, *, role=""):
+        captured.append((role, messages[0]["content"]))  # system message
+        return f"{role} output"
+
+    config = make_config()
+    config.workers[0].instructions = "BE TERSE PLEASE"
+    squad.run_turn(Conversation(), "task", config, caller=cap)
+
+    worker1_systems = [sys for r, sys in captured if r == "worker_1"]
+    worker2_systems = [sys for r, sys in captured if r == "worker_2"]
+    assert worker1_systems and all("BE TERSE PLEASE" in s for s in worker1_systems)
+    assert worker2_systems and all("BE TERSE PLEASE" not in s for s in worker2_systems)
+
+
 def test_followup_includes_prior_context(fake_call):
     conv = Conversation()
     config = make_config()

@@ -34,6 +34,9 @@ model = "openai/gpt-5"
 # One [[agents.workers]] block per worker. Add or remove blocks freely.
 # Each worker proposes blind to the others, gets its own critique from the
 # critic, and revises against it; the PM then synthesizes the revised set.
+# Any agent (pm, critic, or a worker) may add an optional `instructions` string
+# that is appended to its system prompt - tune one model without touching the
+# others, e.g. instructions = "Write tight prose; avoid bullet spam."
 [[agents.workers]]
 model = "anthropic/claude-sonnet-4-6"
 
@@ -44,6 +47,7 @@ model = "gemini/gemini-2.5-pro"
 
 class AgentConfig(BaseModel):
     model: str
+    instructions: str | None = None  # optional, appended to this agent's system prompt
 
 
 class RunConfig(BaseModel):
