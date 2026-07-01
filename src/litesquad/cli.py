@@ -175,7 +175,9 @@ def run(
             console.print(f"[dim]Transcript: {transcript_path}[/]")
 
         try:
-            reply = Prompt.ask("\n[bold]Follow-up[/] ([dim]:quit to exit[/])").strip()
+            reply = Prompt.ask(
+                "\n[bold magenta]Follow-up[/] ([bold yellow]:quit to exit[/])"
+            ).strip()
         except (EOFError, KeyboardInterrupt):
             console.print()
             break

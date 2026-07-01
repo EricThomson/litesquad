@@ -20,6 +20,9 @@ DEFAULT_CONFIG_TOML = """\
 # this on hidden reasoning before the visible answer, so keep it roomy.
 max_tokens = 8000
 save_transcript = true
+# Randomize the order the judge sees the responses so no worker is permanently
+# first (LLM judges have a primacy bias). Turn off for deterministic-order tests.
+shuffle = true
 # temperature is omitted: frontier models (Opus 4.7+, GPT-5) reject it with a 400.
 # Set it only if every model in your squad supports it (Sonnet, Gemini, Opus 4.6-).
 # temperature = 0.4
@@ -62,6 +65,7 @@ class RunConfig(BaseModel):
     temperature: float | None = None
     max_tokens: int = 8000
     save_transcript: bool = True
+    shuffle: bool = True  # randomize the order the judge sees responses (kills primacy bias)
 
 
 class SquadConfig(BaseModel):

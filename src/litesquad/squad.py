@@ -6,6 +6,7 @@ judge answers directly, no ensemble. Rendering-agnostic: progress is reported
 through a :class:`Reporter` so this module never imports ``rich``.
 """
 
+import random
 from typing import Callable, Protocol
 
 from . import prompts
@@ -63,7 +64,7 @@ def _run_stage(
         event = turn.add(
             TranscriptEvent(
                 turn_index=turn.index, stage=stage, role=role, model=model,
-                prompt=prompt, error=str(exc),
+                prompt=prompt, task=turn.task, error=str(exc),
             )
         )
         reporter.stage_done(event)
@@ -71,7 +72,7 @@ def _run_stage(
     event = turn.add(
         TranscriptEvent(
             turn_index=turn.index, stage=stage, role=role, model=model,
-            prompt=prompt, output=output,
+            prompt=prompt, task=turn.task, output=output,
         )
     )
     reporter.stage_done(event)
@@ -122,11 +123,19 @@ def run_turn(
         )
         revised.append(revision)
 
+    # Shuffle the responses before the judge sees them (unless disabled) so no worker
+    # is permanently "Response 1": LLM judges have a primacy bias toward whatever comes
+    # first. The judge is already blind to which model wrote which response, so this
+    # just removes the position advantage. (Provenance stays recoverable by content,
+    # since each worker's revised text is also recorded verbatim in its own stage.)
+    ordered = revised[:]
+    if run_cfg.shuffle:
+        random.shuffle(ordered)
     _run_stage(
         turn, reporter, run_cfg, caller,
         stage="synthesize", role="judge", model=config.judge.model,
         system=_system(prompts.JUDGE_SYSTEM, config.judge),
-        prompt=prompts.synthesize_prompt(task, revised, history),
+        prompt=prompts.synthesize_prompt(task, ordered, history),
     )
 
     return turn
