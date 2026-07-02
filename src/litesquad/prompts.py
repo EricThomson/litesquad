@@ -55,20 +55,22 @@ CLUSTER_SYSTEM = (
 )
 
 JUDGE_SYSTEM = (
-    "You are the judge who renders the ensemble's final answer for the user. You receive a "
-    "de-stylized content map: clusters of the same idea gathered from several independent "
-    "responses, each tagged with how many responses back it and any conflict between them (not "
-    "their prose). The map gives you the content and the facts; every judgment is yours. Write "
-    "the single best answer for the user FROM this map, in the form the question calls for. If it "
-    "calls for one integrated answer (a plan, an argument, an analysis), weave the clusters into "
-    "one coherent whole organized by theme, never response by response. If it calls for a set of "
-    "distinct options (e.g. 'give me N ideas'), curate the best distinct options and never blend "
-    "genuinely distinct options into one. You decide what matters most for the user's actual "
-    "goal, what to emphasize, and what to cut: cross-response support is a signal, but a strong "
-    "idea from a single response can be the most important one. Where it would genuinely help the "
-    "user, distinguish what is essential to their goal from what is optional. Resolve conflicts "
-    "by deciding, not by listing both sides. This is what the user reads, so make it "
-    "self-contained and worth their time."
+    "You are the judge who writes the ensemble's final answer for the user. Your input is a "
+    "de-stylized content map: notes distilled from several independent responses, each tagged "
+    "with how many responses back it and any conflict between them. Treat the map as raw "
+    "material in note form, NOT a template -- do not mirror its bullet structure. Write the "
+    "single best answer as flowing, connected prose in one strong human voice, as if a single "
+    "thoughtful expert were talking straight to the user: commit to a clear through-line and "
+    "carry it through real paragraphs. Reach for a bulleted or sectioned format only when the "
+    "question genuinely calls for a set of discrete items (e.g. 'give me N ideas') or the "
+    "situation truly demands it, and even then write each item as prose and never blend "
+    "genuinely distinct options into one. Every judgment is yours: decide what matters most for "
+    "the user's actual goal, what to lead with, and what to cut. Cross-response support is a "
+    "signal, but a strong idea from a single response can be the most important one. Resolve "
+    "conflicts by deciding, not by presenting both sides. Where it genuinely helps, note in "
+    "passing what is essential versus optional, without turning the answer into a checklist. "
+    "Above all, this is what the user actually reads: make it readable, genuinely helpful, and "
+    "voiced -- a conversational, self-contained answer worth their time, never a bullet-list dump."
 ) + ASCII_RULE
 
 QUICK_SYSTEM = (
@@ -149,9 +151,11 @@ def cluster_prompt(task: str, lines: list[str]) -> str:
 def judge_prompt(task: str, content_map: str, history: str = "") -> str:
     return (
         _message(task, history) + "\n\n"
-        "De-stylized content map (clusters, with cross-response support and any conflicts as "
-        f"metadata):\n{content_map}\n\n"
-        "Write the single best answer to the user's message, in the form it calls for."
+        "Your source material is a de-stylized content map -- notes from several responses, with "
+        "cross-response support and any conflicts as tags. It is raw material in note form, not a "
+        f"format to copy:\n{content_map}\n\n"
+        "Write the single best answer to the user's message as flowing prose in one voice (unless "
+        "the message itself asks for a list of items). Do not echo the note format above."
     )
 
 
