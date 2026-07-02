@@ -16,6 +16,8 @@ def test_default_squad():
     config = default_config()
     assert config.judge.model == "anthropic/claude-opus-4-8"
     assert config.critic.model == "openai/gpt-5"
+    assert config.extractor.model == "openai/gpt-5"
+    assert config.clusterer.model == "anthropic/claude-opus-4-8"
     assert [w.model for w in config.workers] == [
         "anthropic/claude-sonnet-4-6",
         "openai/gpt-4.1-mini",
@@ -60,6 +62,8 @@ def test_models_are_deduplicated():
     config = SquadConfig(
         judge=AgentConfig(model="anthropic/x"),
         critic=AgentConfig(model="anthropic/x"),
+        extractor=AgentConfig(model="anthropic/x"),
+        clusterer=AgentConfig(model="anthropic/x"),
         workers=[AgentConfig(model="anthropic/x")],
     )
     assert config.models() == ["anthropic/x"]

@@ -1,5 +1,6 @@
 """Thin LiteLLM wrapper with explicit, clear failure modes."""
 
+import json
 import os
 
 import litellm
@@ -39,6 +40,24 @@ _ASCII_MAP = str.maketrans({
 def to_ascii(text: str) -> str:
     """Coerce text to plain ASCII: map common typography, drop the rest."""
     return text.translate(_ASCII_MAP).encode("ascii", "ignore").decode("ascii")
+
+
+def parse_json(text: str):
+    """Grab the outermost JSON value (object or array) from a model reply."""
+    starts = [i for i in (text.find("{"), text.find("[")) if i != -1]
+    if not starts:
+        raise ValueError(f"no JSON found: {text[:200]!r}")
+    start = min(starts)
+    end = text.rfind("}" if text[start] == "{" else "]")
+    if end <= start:
+        raise ValueError(f"unbalanced JSON: {text[:200]!r}")
+    return json.loads(text[start:end + 1])
+
+
+def json_list(reply: str, key: str) -> list:
+    """Parse a model reply and return the list under ``key``, tolerating a bare array."""
+    parsed = parse_json(reply)
+    return parsed if isinstance(parsed, list) else parsed.get(key, [])
 
 
 class LLMError(RuntimeError):
@@ -83,12 +102,22 @@ def preflight(config: SquadConfig) -> None:
         )
 
 
-def mock_call_model(model: str, messages: list[dict], run_cfg: RunConfig, *, role: str = "") -> str:
-    """Offline stand-in for :func:`call_model`: canned text, no API key needed.
+def mock_call_model(
+    model: str, messages: list[dict], run_cfg: RunConfig, *, role: str = "", structured: bool = False
+) -> str:
+    """Offline stand-in for :func:`call_model`: canned output, no API key needed.
 
-    Same signature as :func:`call_model`, so it can be injected into the squad to
-    exercise the CLI without any provider credentials.
+    Same signature as :func:`call_model`, so it can be injected into the squad to exercise the
+    CLI without any provider credentials. When ``structured`` is set it returns valid JSON for
+    the extract/cluster stages so the pipeline runs end to end offline.
     """
+    if structured:
+        if "extract" in role:
+            return (
+                '{"units": [{"kind": "claim", "text": "A concrete point from ' + model + '"}, '
+                '{"kind": "claim", "text": "A second point with a small caveat"}]}'
+            )
+        return '{"clusters": []}'  # empty -> every unit becomes its own singleton downstream
     return (
         f"_(mock {role or 'agent'} response from `{model}`)_\n\n"
         "- A concrete first point.\n"
@@ -97,8 +126,15 @@ def mock_call_model(model: str, messages: list[dict], run_cfg: RunConfig, *, rol
     )
 
 
-def call_model(model: str, messages: list[dict], run_cfg: RunConfig, *, role: str = "") -> str:
-    """Call ``model`` and return its text. Wraps failures in :class:`LLMError`."""
+def call_model(
+    model: str, messages: list[dict], run_cfg: RunConfig, *, role: str = "", structured: bool = False
+) -> str:
+    """Call ``model`` and return its text. Wraps failures in :class:`LLMError`.
+
+    With ``structured=True`` the model is asked for JSON (``response_format``) and the raw
+    content is returned unchanged -- no ASCII coercion, which would corrupt JSON strings. That
+    param is dropped for providers that don't support it, so callers must parse tolerantly.
+    """
     params = {
         "model": model,
         "messages": messages,
@@ -107,6 +143,8 @@ def call_model(model: str, messages: list[dict], run_cfg: RunConfig, *, role: st
         # Opus 4.7+ / GPT-5) instead of erroring.
         "drop_params": True,
     }
+    if structured:
+        params["response_format"] = {"type": "json_object"}
     if run_cfg.temperature is not None:
         params["temperature"] = run_cfg.temperature
     try:
@@ -116,4 +154,4 @@ def call_model(model: str, messages: list[dict], run_cfg: RunConfig, *, role: st
     content = response.choices[0].message.content
     if not content:
         raise LLMError(role, model, "model returned an empty response")
-    return to_ascii(content)
+    return content if structured else to_ascii(content)

@@ -13,6 +13,8 @@ def make_config() -> SquadConfig:
         run=RunConfig(save_transcript=False),
         judge=AgentConfig(model="anthropic/judge-model"),
         critic=AgentConfig(model="openai/critic-model"),
+        extractor=AgentConfig(model="openai/extractor-model"),
+        clusterer=AgentConfig(model="anthropic/clusterer-model"),
         workers=[AgentConfig(model="anthropic/worker-a"), AgentConfig(model="gemini/worker-b")],
     )
 
@@ -22,8 +24,12 @@ def fake_call():
     """A deterministic caller that records prompts; inject via ``caller=``."""
     calls: list[dict] = []
 
-    def _fake(model, messages, run_cfg, *, role=""):
+    def _fake(model, messages, run_cfg, *, role="", structured=False):
         calls.append({"model": model, "role": role, "prompt": messages[-1]["content"]})
+        if structured:
+            if "extract" in role:
+                return '{"units": [{"kind": "claim", "text": "unit from ' + role + '"}]}'
+            return '{"clusters": []}'
         return f"{role}::{model} output"
 
     _fake.calls = calls
@@ -34,12 +40,14 @@ def test_deep_flow_sequence(fake_call):
     conv = Conversation()
     turn = squad.run_turn(conv, "Help me think this through", make_config(), caller=fake_call)
 
-    # no frame stage; propose->critique->revise per worker, then the judge
+    # propose->critique->revise per worker, then extract each, cluster, and the judge writes
     stages = [e.stage for e in turn.events]
     assert stages == [
         "propose", "critique", "revise",
         "propose", "critique", "revise",
-        "synthesize",
+        "extract", "extract",
+        "cluster",
+        "judge",
     ]
     assert turn.final_answer == "judge::anthropic/judge-model output"
     assert conv.turns == [turn]
@@ -57,13 +65,21 @@ def test_critique_is_per_worker(fake_call):
     assert revise == [("worker_1", "anthropic/worker-a"), ("worker_2", "gemini/worker-b")]
 
 
-def test_judge_synthesizes_revised_responses(fake_call):
+def test_judge_writes_from_the_content_map(fake_call):
     conv = Conversation()
     squad.run_turn(conv, "anything", make_config(), caller=fake_call)
 
+    # the judge sees a de-stylized content map built from the extracted units, not the
+    # workers' polished prose -- that is what prevents cloning the most fluent draft
     judge_prompt = next(c["prompt"] for c in fake_call.calls if c["role"] == "judge")
-    assert "worker_1::anthropic/worker-a output" in judge_prompt
-    assert "worker_2::gemini/worker-b output" in judge_prompt
+    assert "content map" in judge_prompt.lower()
+    assert "unit from extractor->worker_1" in judge_prompt
+    assert "unit from extractor->worker_2" in judge_prompt
+    # extract and cluster ran on their configured models
+    assert any(c["role"].startswith("extractor") and c["model"] == "openai/extractor-model"
+               for c in fake_call.calls)
+    assert any(c["role"] == "clusterer" and c["model"] == "anthropic/clusterer-model"
+               for c in fake_call.calls)
 
 
 def test_no_frame_workers_get_raw_message(fake_call):
@@ -101,8 +117,12 @@ def test_followup_includes_prior_context(fake_call):
 def test_per_agent_instructions_scoped_to_that_agent():
     captured: list[tuple[str, str]] = []
 
-    def cap(model, messages, run_cfg, *, role=""):
+    def cap(model, messages, run_cfg, *, role="", structured=False):
         captured.append((role, messages[0]["content"]))  # system message
+        if structured:
+            if "extract" in role:
+                return '{"units": [{"kind": "claim", "text": "u"}]}'
+            return '{"clusters": []}'
         return f"{role} output"
 
     config = make_config()
@@ -116,7 +136,7 @@ def test_per_agent_instructions_scoped_to_that_agent():
 
 
 def test_failed_stage_aborts_and_is_recorded():
-    def _boom(model, messages, run_cfg, *, role=""):
+    def _boom(model, messages, run_cfg, *, role="", structured=False):
         if role.startswith("critic"):
             raise LLMError(role, model, "rate limited")
         return f"{role} output"

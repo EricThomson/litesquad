@@ -23,7 +23,9 @@ STAGE_LABEL: dict[Stage, str] = {
     "propose": "responding",
     "critique": "critiquing",
     "revise": "revising",
-    "synthesize": "judging",
+    "extract": "de-stylizing",
+    "cluster": "clustering",
+    "judge": "judging",
     "reply": "answering",
 }
 QUIT_WORDS = {":quit", ":q", "quit", "exit"}
@@ -54,7 +56,7 @@ class ConsoleReporter:
         if event.error:
             console.print(Panel(event.error, title=f"{title} (error)", border_style="red"))
         else:
-            border = "green" if event.stage in ("synthesize", "reply") else "cyan"
+            border = "green" if event.stage in ("judge", "reply") else "cyan"
             console.print(Panel(Markdown(event.output), title=title, border_style=border))
 
 

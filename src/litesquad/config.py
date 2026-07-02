@@ -27,16 +27,27 @@ shuffle = true
 # Set it only if every model in your squad supports it (Sonnet, Gemini, Opus 4.6-).
 # temperature = 0.4
 
-# The judge hears the workers, weighs them, and renders the final answer.
+# The judge writes the final answer from the clustered content map (extract -> cluster -> judge).
 [agents.judge]
 model = "anthropic/claude-opus-4-8"
 
 [agents.critic]
 model = "openai/gpt-5"
 
-# Each worker responds independently (blind to the others), the critic gives each
-# one feedback, the worker revises, and the judge renders the final answer. Any
-# agent may add an `instructions` string that is appended to its system prompt.
+# The extractor de-stylizes each revised response into content units (JSON). A mechanical step,
+# so a cheap model is fine -- swap to openai/gpt-4.1-mini to cut cost.
+[agents.extractor]
+model = "openai/gpt-5"
+
+# The clusterer groups equivalent units across responses and flags conflicts, building the
+# content map the judge writes from. It makes no quality judgment (that is the judge's job).
+[agents.clusterer]
+model = "anthropic/claude-opus-4-8"
+
+# Each worker responds independently (blind to the others), the critic gives each one feedback,
+# and the worker revises. Then the revised answers are extracted into units, clustered into a
+# content map, and the judge writes the final answer from it. Any agent may add an
+# `instructions` string that is appended to its system prompt.
 [[agents.workers]]
 model = "anthropic/claude-sonnet-4-6"
 
@@ -72,12 +83,15 @@ class SquadConfig(BaseModel):
     run: RunConfig = Field(default_factory=RunConfig)
     judge: AgentConfig
     critic: AgentConfig
+    extractor: AgentConfig
+    clusterer: AgentConfig
     workers: list[AgentConfig] = Field(min_length=1)
 
     def models(self) -> list[str]:
         """Every distinct model string referenced by the squad."""
         seen: list[str] = []
-        for model in [self.judge.model, self.critic.model, *(w.model for w in self.workers)]:
+        roles = [self.judge.model, self.critic.model, self.extractor.model, self.clusterer.model]
+        for model in [*roles, *(w.model for w in self.workers)]:
             if model not in seen:
                 seen.append(model)
         return seen
@@ -90,6 +104,8 @@ def _build(raw: dict) -> SquadConfig:
         run=raw.get("run", {}),
         judge=agents.get("judge", {}),
         critic=agents.get("critic", {}),
+        extractor=agents.get("extractor", {}),
+        clusterer=agents.get("clusterer", {}),
         workers=agents.get("workers", []),
     )
 
@@ -102,8 +118,9 @@ def default_config() -> SquadConfig:
 def _merge(defaults: dict, overrides: dict) -> dict:
     """Shallow-merge user overrides onto the default raw config.
 
-    ``run`` keys merge individually; a provided judge/critic replaces that agent; a
-    provided (non-empty) workers list replaces the default workers. Nothing deeper.
+    ``run`` keys merge individually; a provided single agent (judge/critic/extractor/clusterer)
+    replaces that agent; a provided (non-empty) workers list replaces the default workers.
+    Nothing deeper.
     """
     d_agents = defaults.get("agents", {})
     o_agents = overrides.get("agents", {})
@@ -112,6 +129,8 @@ def _merge(defaults: dict, overrides: dict) -> dict:
         "agents": {
             "judge": o_agents.get("judge") or d_agents.get("judge", {}),
             "critic": o_agents.get("critic") or d_agents.get("critic", {}),
+            "extractor": o_agents.get("extractor") or d_agents.get("extractor", {}),
+            "clusterer": o_agents.get("clusterer") or d_agents.get("clusterer", {}),
             "workers": o_agents.get("workers") or d_agents.get("workers", []),
         },
     }

@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-Stage = Literal["propose", "critique", "revise", "synthesize", "reply"]
+Stage = Literal["propose", "critique", "revise", "extract", "cluster", "judge", "reply"]
 
 
 def _now() -> str:
@@ -38,9 +38,9 @@ class Turn(BaseModel):
 
     @property
     def final_answer(self) -> str | None:
-        # deep turns end in "synthesize", quick turns in "reply"
+        # deep turns end in "judge", quick turns in "reply"
         for event in reversed(self.events):
-            if event.stage in ("synthesize", "reply") and not event.error:
+            if event.stage in ("judge", "reply") and not event.error:
                 return event.output
         return None
 
