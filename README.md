@@ -19,6 +19,9 @@ litesquad takes a few minutes to run when running in default (deep) mode. There'
 
 Query is distributed to worker LLMs (gemini and sonnet direct, plus deepseek, mistral, and llama via OpenRouter). Another (grok) acts as a critic that gives feedback to the workers. They revise their response. An intermediate representation of these responses is extracted to pull the content and clustered into categories of suggestions (gpt5). A judge (opus) converts these suggestions into a final coherent answer for the user. 
 
+### So. Many. APIs.
+Todo: replace with openrouter API key only.
+
 To run properly, litesquad currently needs API keys for [Gemini](https://aistudio.google.com/app/apikey), [OpenAI](https://openai.com/index/openai-api/), [Anthropic](https://platform.claude.com/docs/en/api/admin/api_keys/retrieve), and [OpenRouter](https://openrouter.ai/keys). One OpenRouter key reaches the whole openrouter.ai catalog (deepseek, mistral, llama, grok, qwen, ...), which is how the worker roster grows wide without a key per provider. You can store your API keys in `.env`.
 
 ### Basic tests
@@ -29,7 +32,7 @@ Check on specific models: `litesquad --check`
 Offline test: `litesquad --smoke --mock`
 
 ### Caveats
-This provides an interface to an ensemble of LLMs to try to generate a better answer than when using a single LLM. No agentic tool-usage, such as web calls, from the LLMs. Just vanilla text processing.
+This provides an interface to an swarm of LLMs to try to generate a better answer than when using a single LLM. No agentic tool-usage, such as web calls, from the LLMs. Just  reasoning. 
 
 With apologies to [squad](https://github.com/bradygaster/squad). 
 
