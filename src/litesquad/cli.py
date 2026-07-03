@@ -33,21 +33,45 @@ SMOKE_PROMPT = "What is 1 + 1? Answer in one short sentence."
 
 
 class ConsoleReporter:
-    """Renders each completed stage as a Rich panel and appends events to a JSONL file.
+    """Renders each stage as a Rich panel and appends events to a JSONL file.
 
-    Worker chains run in parallel, so stages interleave: the spinner shows everyone
-    currently in flight, and panels print in completion order (each panel's title carries
-    its role and model). Per the Reporter contract, calls arrive serialized, so no lock is
-    needed here; printing while the Status runs is safe (rich renders it above the spinner).
+    Worker chains run in parallel, so their stages complete interleaved. Printing them
+    as they land is unreadable, so chain stages (propose/critique/revise) are buffered
+    per worker and printed as one coherent block the moment that worker's chain finishes
+    (or dies) -- blocks appear in chain-completion order. Everything else (extract,
+    cluster, judge, reply) prints as it completes, and the spinner always shows everyone
+    currently in flight. The transcript JSONL is still appended per event in completion
+    order: it is the durable stream, and the web UI regroups it by worker anyway.
+
+    Per the Reporter contract, calls arrive serialized, so no lock is needed here;
+    printing while the Status runs is safe (rich renders it above the spinner).
     """
 
     def __init__(self, transcript_path: Path | None) -> None:
         self.transcript_path = transcript_path
         self._status: Status | None = None
         self._in_flight: dict[tuple[str, Stage], str] = {}  # (role, stage) -> spinner text
+        self._pending_chains: dict[str, list[Panel]] = {}  # worker key -> panels so far
+
+    @staticmethod
+    def _worker_key(role: str) -> str:
+        """propose/revise carry ``worker_N``; critique carries ``critic->worker_N``."""
+        return role.split("->")[-1]
+
+    @staticmethod
+    def _panel(event: TranscriptEvent) -> Panel:
+        title = f"{event.role} | {event.model}"
+        if event.error:
+            return Panel(event.error, title=f"{title} (error)", border_style="red")
+        border = "green" if event.stage in ("judge", "reply") else "cyan"
+        return Panel(Markdown(event.output), title=title, border_style=border)
 
     def _spinner_text(self) -> str:
         return "  |  ".join(self._in_flight.values())
+
+    def _flush_chain(self, worker: str) -> None:
+        for panel in self._pending_chains.pop(worker, []):
+            console.print(panel)
 
     def stage_start(self, stage: Stage, role: str, model: str) -> None:
         self._in_flight[(role, stage)] = f"[bold]{role}[/] ({model}) - {STAGE_LABEL[stage]}..."
@@ -62,12 +86,13 @@ class ConsoleReporter:
         if self.transcript_path is not None:
             with self.transcript_path.open("a", encoding="utf-8") as fh:
                 fh.write(event.to_jsonl() + "\n")
-        title = f"{event.role} | {event.model}"
-        if event.error:
-            console.print(Panel(event.error, title=f"{title} (error)", border_style="red"))
+        if event.stage in ("propose", "critique", "revise"):
+            worker = self._worker_key(event.role)
+            self._pending_chains.setdefault(worker, []).append(self._panel(event))
+            if event.stage == "revise" or event.error:  # chain finished, or died here
+                self._flush_chain(worker)
         else:
-            border = "green" if event.stage in ("judge", "reply") else "cyan"
-            console.print(Panel(Markdown(event.output), title=title, border_style=border))
+            console.print(self._panel(event))
         if self._status is not None:
             if self._in_flight:
                 self._status.update(self._spinner_text())
@@ -76,8 +101,11 @@ class ConsoleReporter:
                 self._status = None
 
     def close(self) -> None:
-        """Stop the spinner. Call in a ``finally``: an aborted turn must not leave a live
-        display running (it would hide the terminal cursor and keep spinning)."""
+        """Flush any unfinished chains and stop the spinner. Call in a ``finally``: an
+        aborted turn must still show what its surviving chains produced, and must not
+        leave a live display running (hidden cursor, endless spinner)."""
+        for worker in list(self._pending_chains):
+            self._flush_chain(worker)
         if self._status is not None:
             self._status.stop()
             self._status = None
@@ -91,6 +119,25 @@ def _transcript_path(save: bool) -> Path | None:
     return paths.transcripts_dir() / f"{stamp}.jsonl"
 
 
+def _model_roles(config: SquadConfig) -> list[tuple[str, str]]:
+    """Distinct configured models in pipeline order (workers first, then critic ->
+    extractor -> clusterer -> judge), each with the role(s) it holds -- so --check
+    doubles as a who-does-what roster card."""
+    assignments = [
+        *(("worker", worker.model) for worker in config.workers),
+        ("critic", config.critic.model),
+        ("extractor", config.extractor.model),
+        ("clusterer", config.clusterer.model),
+        ("judge", config.judge.model),
+    ]
+    roles_by_model: dict[str, list[str]] = {}
+    for role, model in assignments:
+        roles = roles_by_model.setdefault(model, [])
+        if role not in roles:  # two workers on one model still read as one "worker"
+            roles.append(role)
+    return [(model, ", ".join(roles)) for model, roles in roles_by_model.items()]
+
+
 def _check_models(config: SquadConfig) -> bool:
     """Ping each distinct configured model with a tiny request. Returns all-ok.
 
@@ -102,13 +149,13 @@ def _check_models(config: SquadConfig) -> bool:
     run_cfg = RunConfig(max_tokens=1024, save_transcript=False)
     messages = [{"role": "user", "content": "Reply with the single word: ok"}]
     all_ok = True
-    for model in config.models():
+    for model, roles in _model_roles(config):
         try:
             reply = call_model(model, messages, run_cfg, role="check").strip()
-            console.print(f"[green]✓[/] {model} — {reply[:40]}")
+            console.print(f"[green]✓[/] {model} [dim]({roles})[/] — {reply[:40]}")
         except LLMError as exc:
             all_ok = False
-            console.print(f"[red]✗[/] {model} — {exc}")
+            console.print(f"[red]✗[/] {model} [dim]({roles})[/] — {exc}")
     return all_ok
 
 

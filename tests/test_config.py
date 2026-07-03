@@ -23,15 +23,14 @@ def test_default_squad():
     assert config.clusterer.model == "anthropic/claude-opus-4-8"
     assert [w.model for w in config.workers] == [
         "anthropic/claude-sonnet-4-6",
-        "openai/gpt-4.1-mini",
         "gemini/gemini-2.5-pro",
         "openrouter/deepseek/deepseek-chat",
         "openrouter/mistralai/mistral-large",
         "openrouter/meta-llama/llama-3.3-70b-instruct",
     ]
-    # the openai worker ships tamed by default
-    openai_worker = next(w for w in config.workers if w.model == "openai/gpt-4.1-mini")
-    assert openai_worker.instructions and "prose" in openai_worker.instructions
+    # clustering scales with roster width, so the clusterer ships with headroom
+    assert config.clusterer.max_tokens == 24000
+    assert all(w.max_tokens is None for w in config.workers)
 
 
 def test_max_parallel_class_default_matches_toml_default():
@@ -60,6 +59,16 @@ def test_override_replaces_workers(tmp_path):
     assert [w.model for w in config.workers] == ["anthropic/only-me"]
     # unspecified pieces still track the default
     assert config.judge.model == default_config().judge.model
+
+
+def test_agent_max_tokens_override_parses(tmp_path):
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        '[agents.clusterer]\nmodel = "openai/gpt-5"\nmax_tokens = 24000\n', encoding="utf-8"
+    )
+    config = load_config(cfg_path)
+    assert config.clusterer.max_tokens == 24000
+    assert config.judge.max_tokens is None  # untouched agents keep the run default
 
 
 def test_override_run_key_merges(tmp_path):

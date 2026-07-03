@@ -46,19 +46,20 @@ model = "openai/gpt-5"
 
 # The clusterer groups equivalent units across responses and flags conflicts, building the
 # content map the judge writes from. It makes no quality judgment (that is the judge's job).
+# Its load scales with roster width (every worker's units land in one pool), and a reasoning
+# model in this seat spends hidden budget before emitting the JSON, so it gets extra headroom.
 [agents.clusterer]
 model = "anthropic/claude-opus-4-8"
+max_tokens = 24000
 
 # Each worker responds independently (blind to the others), the critic gives each one feedback,
 # and the worker revises. Then the revised answers are extracted into units, clustered into a
 # content map, and the judge writes the final answer from it. Any agent may add an
-# `instructions` string that is appended to its system prompt.
+# `instructions` string that is appended to its system prompt, and a `max_tokens` that
+# overrides [run] max_tokens for its own calls -- e.g. a reasoning model clustering a wide
+# roster's units can need max_tokens = 24000 while the workers stay at the run default.
 [[agents.workers]]
 model = "anthropic/claude-sonnet-4-6"
-
-[[agents.workers]]
-model = "openai/gpt-4.1-mini"
-instructions = "Write in tight prose. Use at most a few bullets, only for genuinely list-like content, and never a step-by-step plan for a simple ask. Cut filler and preamble."
 
 [[agents.workers]]
 model = "gemini/gemini-2.5-pro"
@@ -91,6 +92,7 @@ _STARTER_HEADER = """\
 class AgentConfig(BaseModel):
     model: str
     instructions: str | None = None  # optional, appended to this agent's system prompt
+    max_tokens: int | None = None  # optional, overrides run.max_tokens for this agent's calls
 
 
 class RunConfig(BaseModel):

@@ -45,6 +45,17 @@ def _system(base: str, agent: AgentConfig) -> str:
     return f"{base} {agent.instructions}" if agent.instructions else base
 
 
+def _agent_run_cfg(run_cfg: RunConfig, agent: AgentConfig) -> RunConfig:
+    """The run config for one agent's calls: its own max_tokens wins if set.
+
+    Roles need different headroom -- a reasoning model clustering a wide roster's
+    units burns far more of the budget than a worker writing one answer.
+    """
+    if agent.max_tokens is None:
+        return run_cfg
+    return run_cfg.model_copy(update={"max_tokens": agent.max_tokens})
+
+
 # A model caller: same signature as litellm-backed ``call_model``. Injectable so
 # the CLI can run a mock (offline) squad without provider credentials.
 Caller = Callable[..., str]
@@ -188,6 +199,9 @@ def _run_stage(
 def _content_map(clusters: list[dict], idmap: dict[str, dict]) -> str:
     """Render clusters into the judge's content map: facts only (support counts + conflicts).
 
+    Each cluster carries its member units' FULL de-stylized texts under the label -- a label
+    alone starves the judge of the specifics the extractor preserved, and a starved judge
+    invents them (measured: it confabulated another concept's palette onto the winning one).
     Any unit the clusterer left out becomes its own singleton so nothing is lost, and clusters
     that reference only unknown ids are dropped. Sorted by cross-response support, high first.
     """
@@ -206,7 +220,12 @@ def _content_map(clusters: list[dict], idmap: dict[str, dict]) -> str:
         tag = f"backed by {len(support(cluster))} response(s)"
         if cluster.get("conflict"):
             tag += f"; CONFLICT: {cluster['conflict']}"
-        lines.append(f"- [{tag}] {cluster.get('label', '')}")
+        label = cluster.get("label", "")
+        lines.append(f"- [{tag}] {label}")
+        members = [idmap[m] for m in cluster.get("member_ids", []) if m in idmap]
+        if len(members) == 1 and members[0]["text"] == label:
+            continue  # synthetic singleton: the label already is the unit's full text
+        lines.extend(f"    * {unit['text']}" for unit in members)
     return "\n".join(lines)
 
 
@@ -236,20 +255,21 @@ def run_turn(
     def worker_chain(index: int, worker: AgentConfig) -> Callable[[], str]:
         def chain() -> str:
             role = f"worker_{index + 1}"
+            worker_cfg = _agent_run_cfg(run_cfg, worker)
             proposal = _run_stage(
-                turn, reporter, run_cfg, caller, lock=lock,
+                turn, reporter, worker_cfg, caller, lock=lock,
                 stage="propose", role=role, model=worker.model,
                 system=_system(prompts.WORKER_SYSTEM, worker),
                 prompt=prompts.propose_prompt(task, history),
             )
             critique = _run_stage(
-                turn, reporter, run_cfg, caller, lock=lock,
+                turn, reporter, _agent_run_cfg(run_cfg, config.critic), caller, lock=lock,
                 stage="critique", role=f"critic->{role}", model=config.critic.model,
                 system=_system(prompts.CRITIC_SYSTEM, config.critic),
                 prompt=prompts.critique_prompt(task, proposal),
             )
             return _run_stage(
-                turn, reporter, run_cfg, caller, lock=lock,
+                turn, reporter, worker_cfg, caller, lock=lock,
                 stage="revise", role=role, model=worker.model,
                 system=_system(prompts.WORKER_SYSTEM, worker),
                 prompt=prompts.revise_prompt(task, proposal, critique),
@@ -270,7 +290,7 @@ def run_turn(
         def extract() -> list[dict]:
             role = f"extractor->worker_{index + 1}"
             raw = _run_stage(
-                turn, reporter, run_cfg, caller, lock=lock,
+                turn, reporter, _agent_run_cfg(run_cfg, config.extractor), caller, lock=lock,
                 stage="extract", role=role, model=config.extractor.model,
                 system=_system(prompts.EXTRACT_SYSTEM, config.extractor),
                 prompt=prompts.extract_prompt(task, revision), structured=True,
@@ -318,14 +338,14 @@ def run_turn(
     # The cluster stage stores/returns the rendered content map (facts only), so it displays as
     # a readable panel and feeds straight into the judge.
     content_map = _run_stage(
-        turn, reporter, run_cfg, caller, lock=lock,
+        turn, reporter, _agent_run_cfg(run_cfg, config.clusterer), caller, lock=lock,
         stage="cluster", role="clusterer", model=config.clusterer.model,
         system=_system(prompts.CLUSTER_SYSTEM, config.clusterer),
         prompt=prompts.cluster_prompt(task, lines), structured=True, transform=_to_map,
     )
 
     _run_stage(
-        turn, reporter, run_cfg, caller, lock=lock,
+        turn, reporter, _agent_run_cfg(run_cfg, config.judge), caller, lock=lock,
         stage="judge", role="judge", model=config.judge.model,
         system=_system(prompts.JUDGE_SYSTEM, config.judge),
         prompt=prompts.judge_prompt(task, content_map, history),
@@ -348,7 +368,7 @@ def run_quick(
     turn = conversation.new_turn(task)
 
     _run_stage(
-        turn, reporter, config.run, caller, lock=threading.Lock(),
+        turn, reporter, _agent_run_cfg(config.run, config.judge), caller, lock=threading.Lock(),
         stage="reply", role="judge", model=config.judge.model,
         system=_system(prompts.QUICK_SYSTEM, config.judge),
         prompt=prompts.quick_prompt(task, history),

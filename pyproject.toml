@@ -17,7 +17,10 @@ dependencies = [
 
 [project.optional-dependencies]
 web = [
-    "dash>=3.0",
+    # <4.2: Dash 4.2+ remounts every child whenever a callback writes a children
+    # prop (open regression, plotly/dash#3846), which wipes DOM state like
+    # <details> open/closed in the live view. Lift the cap when that issue closes.
+    "dash>=3.0,<4.2",
 ]
 
 [project.scripts]

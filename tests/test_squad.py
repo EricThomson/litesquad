@@ -158,6 +158,43 @@ def test_failed_stage_aborts_and_is_recorded():
     assert turn.final_answer is None
 
 
+def test_content_map_carries_member_unit_texts():
+    idmap = {
+        "u0": {"source": "Draft A", "text": "Concept X: a ring of dots", "kind": "option"},
+        "u1": {"source": "Draft B", "text": "Concept X uses teal #0097A7", "kind": "claim"},
+        "u2": {"source": "Draft A", "text": "A lone singleton point", "kind": "claim"},
+    }
+    clusters = [{"label": "Concept X - dot ring", "member_ids": ["u0", "u1"], "conflict": None}]
+    rendered = squad._content_map(clusters, idmap)
+    # the cluster keeps its label AND its members' full texts (the judge reads these)
+    assert "- [backed by 2 response(s)] Concept X - dot ring" in rendered
+    assert "    * Concept X: a ring of dots" in rendered
+    assert "    * Concept X uses teal #0097A7" in rendered
+    # a synthetic singleton's label already is the unit text, so no redundant sub-line
+    assert rendered.count("A lone singleton point") == 1
+
+
+def test_per_agent_max_tokens_overrides_run_default():
+    budgets: dict[str, int] = {}
+
+    def cap(model, messages, run_cfg, *, role="", structured=False):
+        budgets[role] = run_cfg.max_tokens
+        if structured:
+            if "extract" in role:
+                return '{"units": [{"kind": "claim", "text": "u"}]}'
+            return '{"clusters": []}'
+        return f"{role} output"
+
+    config = make_config()
+    config.clusterer.max_tokens = 24000
+    squad.run_turn(Conversation(), "task", config, caller=cap)
+
+    assert budgets["clusterer"] == 24000
+    # everyone without an override stays on the run default
+    assert budgets["worker_1"] == config.run.max_tokens
+    assert budgets["judge"] == config.run.max_tokens
+
+
 def test_draft_labels_cover_any_roster_size():
     assert squad._draft_label(0) == "Draft A"
     assert squad._draft_label(25) == "Draft Z"

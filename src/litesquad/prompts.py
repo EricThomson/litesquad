@@ -32,8 +32,10 @@ CRITIC_SYSTEM = (
     "to revise it once. Judge it on its own terms and by what would actually help the "
     "user, whatever the subject and whatever form the response takes. Say what is strong, "
     "and where it is weak, shallow, generic, wrong, or missing something that matters. If "
-    "it is genuinely strong, say so plainly instead of inventing problems. When you do want "
-    "changes, be specific enough that the author can act on them directly. Be direct and "
+    "it is genuinely strong, say so plainly instead of inventing problems. Diagnose, do not "
+    "prescribe: locate each problem precisely (which part, which constraint it violates, why "
+    "it fails) so the author can act, but the fix is the author's to invent -- never supply "
+    "your own replacement designs, structures, wordings, or ideas. Be direct and "
     "brief, never pedantic. The user wants new and varied ideas, so do not penalize an idea "
     "for being unconventional, contrarian, or not yet fully worked out -- those are often the "
     "most valuable, and your job there is to help sharpen them, not to talk the author out of "
@@ -46,8 +48,12 @@ CRITIC_SYSTEM = (
 # parsed, not shown; the final answer, which is shown, goes through the judge and to_ascii).
 EXTRACT_SYSTEM = (
     "You are a neutral analyst reducing one response to its distinct reusable content units so "
-    "the judge can build a new answer from them. Strip all voice, formatting, and phrasing; keep "
-    "only the content. Output ONLY JSON."
+    "the judge can build a new answer from them. Strip voice, rhetoric, formatting, and "
+    "salesmanship -- never meaning. Analogies, imagery, and examples that specify or constrain "
+    "the thing described are content, not decoration: keep them, restated plainly. Rationales "
+    "(what an element means, why a choice works) are content: keep them attached to the thing "
+    "they explain. Every concrete specific -- numbers, names, exact values, spatial relations -- "
+    "must survive into some unit. Output ONLY JSON."
 )
 
 CLUSTER_SYSTEM = (
@@ -80,8 +86,8 @@ JUDGE_SYSTEM = (
     "as real questions -- never a checklist and never in place of answering now. Where it "
     "genuinely helps, note in "
     "passing what is essential versus optional, without turning the answer into a checklist. "
-    "Above all, this is what the user actually reads: make it readable, genuinely helpful, and "
-    "voiced -- a conversational, self-contained answer worth their time, never a bullet-list dump."
+    "Above all, this is what the user actually reads: make it readable, helpful, and "
+    "voiced."
 ) + ASCII_RULE
 
 QUICK_SYSTEM = (
@@ -113,8 +119,9 @@ def critique_prompt(task: str, proposal: str) -> str:
         f"One response from the ensemble:\n{proposal}\n\n"
         "Critique this response on its own terms. What is strong, and what is weak, shallow, "
         "wrong, unsupported, or missing? If it is already strong, say so plainly rather than "
-        "manufacturing problems. Otherwise end with the few concrete changes that would most "
-        "improve it, specific enough that the author can act on them directly."
+        "manufacturing problems. Otherwise end with the few problems most worth fixing, each "
+        "located precisely (which part, why it fails). Name the problem, not your own "
+        "replacement: what to build instead is the author's call."
     )
 
 
@@ -133,15 +140,21 @@ def extract_prompt(task: str, response: str) -> str:
     return (
         f"The user's question:\n{task}\n\n"
         f"One response:\n{response}\n\n"
-        "Reduce this response to its distinct content UNITS, discarding all wording and style. "
-        "A unit is one of:\n"
+        "Reduce this response to its distinct content UNITS, discarding style but never "
+        "content. A unit is one of:\n"
         "- claim: an atomic point, fact, recommendation, step, or judgment;\n"
         "- move: a structural or organizing choice that makes the response good;\n"
         "- option: one discrete proposal, when the response offers a set of alternatives "
         "(e.g. distinct designs, names, or ideas).\n"
-        "Keep each unit self-contained and plain. Do NOT merge distinct options together. "
-        "Extract at most about 20 substantive units: combine trivial or repetitive sub-points "
-        "into the meaningful ones rather than atomizing every sentence.\n\n"
+        "A unit may run one to three sentences: self-contained and content-complete, never "
+        "telegraphic. Preserve, restated neutrally:\n"
+        "- analogies and imagery that constrain the thing described ('arranged like iron "
+        "filings near a magnet' is a spec, not decoration: keep the analogy);\n"
+        "- what elements mean and why choices work (rationale is content, not commentary);\n"
+        "- every concrete specific: numbers, names, exact values, positions.\n"
+        "Drop only tone, rhetoric, persuasion, and formatting. Do NOT merge distinct options "
+        "together. Extract at most about 25 substantive units: fold trivial or repetitive "
+        "sub-points into the meaningful ones rather than atomizing every sentence.\n\n"
         'Return ONLY JSON: {"units": [{"kind": "claim|move|option", "text": "..."}]}'
     )
 
@@ -166,10 +179,13 @@ def judge_prompt(task: str, content_map: str, history: str = "") -> str:
     return (
         _message(task, history) + "\n\n"
         "Your source material is a de-stylized content map -- notes from several responses, with "
-        "cross-response support and any conflicts as tags. It is raw material in note form, not a "
-        f"format to copy:\n{content_map}\n\n"
+        "cross-response support and any conflicts as tags, and each point's full details "
+        f"indented beneath it. It is raw material in note form, not a format to copy:\n"
+        f"{content_map}\n\n"
         "Write the single best answer to the user's message as flowing prose in one voice (unless "
-        "the message itself asks for a list of items). Do not echo the note format above."
+        "the message itself asks for a list of items). Do not echo the note format above. Work "
+        "from the specifics recorded in the map -- never invent details (numbers, names, colors) "
+        "that are not in it."
     )
 
 
