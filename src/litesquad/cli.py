@@ -33,22 +33,32 @@ SMOKE_PROMPT = "What is 1 + 1? Answer in one short sentence."
 
 
 class ConsoleReporter:
-    """Renders each stage as a Rich panel and appends events to a JSONL file."""
+    """Renders each completed stage as a Rich panel and appends events to a JSONL file.
+
+    Worker chains run in parallel, so stages interleave: the spinner shows everyone
+    currently in flight, and panels print in completion order (each panel's title carries
+    its role and model). Per the Reporter contract, calls arrive serialized, so no lock is
+    needed here; printing while the Status runs is safe (rich renders it above the spinner).
+    """
 
     def __init__(self, transcript_path: Path | None) -> None:
         self.transcript_path = transcript_path
         self._status: Status | None = None
+        self._in_flight: dict[tuple[str, Stage], str] = {}  # (role, stage) -> spinner text
+
+    def _spinner_text(self) -> str:
+        return "  |  ".join(self._in_flight.values())
 
     def stage_start(self, stage: Stage, role: str, model: str) -> None:
-        self._status = console.status(
-            f"[bold]{role}[/] ({model}) - {STAGE_LABEL[stage]}...", spinner="dots"
-        )
-        self._status.start()
+        self._in_flight[(role, stage)] = f"[bold]{role}[/] ({model}) - {STAGE_LABEL[stage]}..."
+        if self._status is None:
+            self._status = console.status(self._spinner_text(), spinner="dots")
+            self._status.start()
+        else:
+            self._status.update(self._spinner_text())
 
     def stage_done(self, event: TranscriptEvent) -> None:
-        if self._status is not None:
-            self._status.stop()
-            self._status = None
+        self._in_flight.pop((event.role, event.stage), None)
         if self.transcript_path is not None:
             with self.transcript_path.open("a", encoding="utf-8") as fh:
                 fh.write(event.to_jsonl() + "\n")
@@ -58,6 +68,20 @@ class ConsoleReporter:
         else:
             border = "green" if event.stage in ("judge", "reply") else "cyan"
             console.print(Panel(Markdown(event.output), title=title, border_style=border))
+        if self._status is not None:
+            if self._in_flight:
+                self._status.update(self._spinner_text())
+            else:
+                self._status.stop()
+                self._status = None
+
+    def close(self) -> None:
+        """Stop the spinner. Call in a ``finally``: an aborted turn must not leave a live
+        display running (it would hide the terminal cursor and keep spinning)."""
+        if self._status is not None:
+            self._status.stop()
+            self._status = None
+        self._in_flight.clear()
 
 
 def _transcript_path(save: bool) -> Path | None:
@@ -152,6 +176,8 @@ def run(
         except Exception as exc:  # noqa: BLE001 - smoke surfaces ANY failure (call or save)
             console.print(f"[red]Smoke test FAILED: {exc}[/]")
             raise typer.Exit(1) from exc
+        finally:
+            reporter.close()
         if transcript_path is not None:
             console.print(f"[dim]Transcript: {transcript_path}[/]")
         console.print("[green]Smoke test passed - all stages produced output.[/]")
@@ -185,6 +211,8 @@ def run(
             run_one(conversation, current_task, config, reporter, caller=caller)
         except LLMError as exc:
             console.print(f"[red]Turn aborted: {exc}[/]")
+        finally:
+            reporter.close()
 
         if transcript_path is not None:
             console.print(f"[dim]Transcript: {transcript_path}[/]")

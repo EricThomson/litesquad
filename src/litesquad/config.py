@@ -23,6 +23,11 @@ save_transcript = true
 # Randomize the order the judge sees the responses so no worker is permanently
 # first (LLM judges have a primacy bias). Turn off for deterministic-order tests.
 shuffle = true
+# How many worker chains run at once (threads; model calls are I/O-bound).
+# 1 runs everything serially, which is useful when debugging. Higher values
+# speed up wide rosters but hit providers harder: the critic model receives
+# roughly this many concurrent requests.
+max_parallel = 4
 # temperature is omitted: frontier models (Opus 4.7+, GPT-5) reject it with a 400.
 # Set it only if every model in your squad supports it (Sonnet, Gemini, Opus 4.6-).
 # temperature = 0.4
@@ -57,6 +62,22 @@ instructions = "Write in tight prose. Use at most a few bullets, only for genuin
 
 [[agents.workers]]
 model = "gemini/gemini-2.5-pro"
+
+# openrouter/* workers: one OPENROUTER_API_KEY reaches every provider on
+# openrouter.ai (deepseek, mistral, llama, grok, qwen, ...), which is how the
+# roster grows wide without needing a key per provider. Prefer non-reasoning
+# models as workers here: through OpenRouter a reasoning model can spend the
+# whole max_tokens budget on hidden reasoning and return empty content. If you
+# do add one, tell it to answer tersely -- instructions cap the visible answer
+# reliably, the hidden reasoning only partly.
+[[agents.workers]]
+model = "openrouter/deepseek/deepseek-chat"
+
+[[agents.workers]]
+model = "openrouter/mistralai/mistral-large"
+
+[[agents.workers]]
+model = "openrouter/meta-llama/llama-3.3-70b-instruct"
 """
 
 _STARTER_HEADER = """\
@@ -77,6 +98,7 @@ class RunConfig(BaseModel):
     max_tokens: int = 8000
     save_transcript: bool = True
     shuffle: bool = True  # randomize the order the judge sees responses (kills primacy bias)
+    max_parallel: int = 4  # concurrent worker chains (1 = serial); keep equal to the TOML default
 
 
 class SquadConfig(BaseModel):

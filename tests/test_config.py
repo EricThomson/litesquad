@@ -4,12 +4,15 @@ import pytest
 
 from litesquad.config import (
     AgentConfig,
+    RunConfig,
     SquadConfig,
     default_config,
     ensure_starter,
     load_config,
 )
 from litesquad.llm import MissingKeysError, preflight
+
+ALL_KEYS = ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY")
 
 
 def test_default_squad():
@@ -22,10 +25,19 @@ def test_default_squad():
         "anthropic/claude-sonnet-4-6",
         "openai/gpt-4.1-mini",
         "gemini/gemini-2.5-pro",
+        "openrouter/deepseek/deepseek-chat",
+        "openrouter/mistralai/mistral-large",
+        "openrouter/meta-llama/llama-3.3-70b-instruct",
     ]
     # the openai worker ships tamed by default
     openai_worker = next(w for w in config.workers if w.model == "openai/gpt-4.1-mini")
     assert openai_worker.instructions and "prose" in openai_worker.instructions
+
+
+def test_max_parallel_class_default_matches_toml_default():
+    # RunConfig() is constructed directly in a few places (e.g. --check), so the
+    # class default must not drift from the authoritative TOML value
+    assert default_config().run.max_parallel == RunConfig().max_parallel == 4
 
 
 def test_missing_file_uses_defaults(tmp_path):
@@ -70,14 +82,29 @@ def test_models_are_deduplicated():
 
 
 def test_preflight_reports_missing_keys(monkeypatch):
-    for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"):
+    for var in ALL_KEYS:
         monkeypatch.delenv(var, raising=False)
     with pytest.raises(MissingKeysError) as exc:
         preflight(default_config())
     assert "ANTHROPIC_API_KEY" in str(exc.value)
+    assert "OPENROUTER_API_KEY" in str(exc.value)  # the default roster is wide
 
 
 def test_preflight_passes_when_keys_present(monkeypatch):
-    for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"):
+    for var in ALL_KEYS:
         monkeypatch.setenv(var, "x")
-    preflight(default_config())  # should not raise
+    preflight(default_config())
+
+
+def test_preflight_skips_keys_no_configured_model_needs(monkeypatch):
+    for var in ALL_KEYS:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+    anthropic_only = SquadConfig(
+        judge=AgentConfig(model="anthropic/x"),
+        critic=AgentConfig(model="anthropic/x"),
+        extractor=AgentConfig(model="anthropic/x"),
+        clusterer=AgentConfig(model="anthropic/x"),
+        workers=[AgentConfig(model="anthropic/x")],
+    )
+    preflight(anthropic_only)  # openrouter etc. not referenced, so not required  # should not raise

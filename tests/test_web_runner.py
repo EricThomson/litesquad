@@ -10,12 +10,15 @@ import pytest
 
 from litesquad.config import AgentConfig, RunConfig, SquadConfig
 from litesquad.llm import LLMError
+from litesquad.models import TranscriptEvent
 from litesquad.web.runner import TurnRunner, expected_stage_count
 
 
-def make_config() -> SquadConfig:
+def make_config(max_parallel: int = 1) -> SquadConfig:
+    """Test squad. ``max_parallel`` defaults to 1 so event order is deterministic;
+    tests exercising the parallel path opt in explicitly."""
     return SquadConfig(
-        run=RunConfig(save_transcript=False),
+        run=RunConfig(save_transcript=False, max_parallel=max_parallel),
         judge=AgentConfig(model="anthropic/judge-model"),
         critic=AgentConfig(model="openai/critic-model"),
         extractor=AgentConfig(model="openai/extractor-model"),
@@ -112,3 +115,50 @@ def test_aborted_turn_records_error_and_runner_recovers(tmp_path):
     runner.wait(timeout=10)
     assert runner.snapshot().error is None
     assert runner.events()[-1].stage == "judge"
+
+
+def test_snapshot_shows_parallel_stages_in_flight(tmp_path):
+    """With two chains running, the snapshot must list both proposals at once."""
+    arrived = threading.Barrier(3)  # both worker threads + the test thread
+    release = threading.Event()
+    seen_workers: set[str] = set()
+    guard = threading.Lock()
+
+    def blocking_propose(model, messages, run_cfg, *, role="", structured=False):
+        first_call_for_worker = False  # a worker role's first call is its propose stage
+        if role.startswith("worker"):
+            with guard:
+                if role not in seen_workers:
+                    seen_workers.add(role)
+                    first_call_for_worker = True
+        if first_call_for_worker:
+            arrived.wait(timeout=5)
+            release.wait(timeout=5)
+        return fake_call(model, messages, run_cfg, role=role, structured=structured)
+
+    runner = TurnRunner(blocking_propose, transcript_path=tmp_path / "t.jsonl")
+    runner.start("task", make_config(max_parallel=2))
+    arrived.wait(timeout=5)  # both proposals are now in flight and held open
+    state = runner.snapshot()
+    assert state.running
+    assert sorted(state.in_flight) == [
+        ("propose", "worker_1", "anthropic/worker-a"),
+        ("propose", "worker_2", "gemini/worker-b"),
+    ]
+    release.set()
+    runner.wait(timeout=10)
+    done = runner.snapshot()
+    assert done.stages_done == 10 and done.in_flight == ()
+
+
+def test_events_tolerates_torn_final_line(tmp_path):
+    """A poll can catch the writer mid-append; the torn line is skipped, not fatal."""
+    path = tmp_path / "t.jsonl"
+    whole = TranscriptEvent(
+        turn_index=0, stage="propose", role="worker_1", model="m", prompt="p", task="t",
+        output="done",
+    ).to_jsonl()
+    path.write_text(whole + "\n" + '{"turn_index": 0, "stage": "crit', encoding="utf-8")
+    runner = TurnRunner(fake_call, transcript_path=path)
+    events = runner.events()
+    assert [e.stage for e in events] == ["propose"]

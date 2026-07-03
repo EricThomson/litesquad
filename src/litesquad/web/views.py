@@ -64,12 +64,14 @@ def config_header(config: SquadConfig, mock: bool) -> html.Div:
 
 
 def progress_line(state: RunState) -> html.Div:
-    """One line of live status: stage counter plus who is working right now."""
+    """One line of live status: stage counter plus everyone working right now
+    (worker chains run in parallel, so several stages can be in flight at once)."""
     if state.running:
-        parts = [f"Stage {state.stages_done + 1} of {state.stages_expected}"]
-        if state.current_role:
-            parts.append(f"{state.current_role} ({state.current_model}) "
-                         f"{STAGE_LABEL[state.current_stage]}...")
+        parts = [f"{state.stages_done} of {state.stages_expected} stages done"]
+        parts.extend(
+            f"{role} ({model}) {STAGE_LABEL[stage]}..."
+            for stage, role, model in state.in_flight
+        )
         return html.Div(" -- ".join(parts), style={"fontWeight": "bold", "margin": "0.5rem 0"})
     if state.error:
         return html.Div(f"Turn aborted: {state.error}", style=_ERROR)

@@ -18,6 +18,9 @@ PROVIDER_KEYS: dict[str, str] = {
     "anthropic": "ANTHROPIC_API_KEY",
     "openai": "OPENAI_API_KEY",
     "gemini": "GEMINI_API_KEY",
+    # One key for the whole openrouter.ai catalog (model strings look like
+    # "openrouter/<org>/<model>", so the provider segment is still the first).
+    "openrouter": "OPENROUTER_API_KEY",
 }
 
 
@@ -133,7 +136,8 @@ def call_model(
 
     With ``structured=True`` the model is asked for JSON (``response_format``) and the raw
     content is returned unchanged -- no ASCII coercion, which would corrupt JSON strings. That
-    param is dropped for providers that don't support it, so callers must parse tolerantly.
+    param is dropped for providers that don't support it (and openrouter forwards it, where the
+    routed provider may silently ignore it), so callers must parse tolerantly either way.
     """
     params = {
         "model": model,
@@ -142,6 +146,9 @@ def call_model(
         # Silently drop params a given model rejects (e.g. temperature on
         # Opus 4.7+ / GPT-5) instead of erroring.
         "drop_params": True,
+        # Retry transient failures (429s, blips) inside litellm. Matters now
+        # that parallel worker chains burst a provider with concurrent calls.
+        "num_retries": 2,
     }
     if structured:
         params["response_format"] = {"type": "json_object"}

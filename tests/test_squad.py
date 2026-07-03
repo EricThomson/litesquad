@@ -1,5 +1,7 @@
 """Orchestration tests. Model calls are injected; no network or API keys."""
 
+import threading
+
 import pytest
 
 from litesquad import squad
@@ -8,14 +10,19 @@ from litesquad.llm import LLMError
 from litesquad.models import Conversation
 
 
-def make_config() -> SquadConfig:
+def make_config(
+    max_parallel: int = 1, workers: list[AgentConfig] | None = None
+) -> SquadConfig:
+    """Test squad. ``max_parallel`` defaults to 1 so event order is deterministic;
+    tests exercising the parallel path opt in explicitly."""
     return SquadConfig(
-        run=RunConfig(save_transcript=False),
+        run=RunConfig(save_transcript=False, max_parallel=max_parallel),
         judge=AgentConfig(model="anthropic/judge-model"),
         critic=AgentConfig(model="openai/critic-model"),
         extractor=AgentConfig(model="openai/extractor-model"),
         clusterer=AgentConfig(model="anthropic/clusterer-model"),
-        workers=[AgentConfig(model="anthropic/worker-a"), AgentConfig(model="gemini/worker-b")],
+        workers=workers
+        or [AgentConfig(model="anthropic/worker-a"), AgentConfig(model="gemini/worker-b")],
     )
 
 
@@ -149,3 +156,83 @@ def test_failed_stage_aborts_and_is_recorded():
     assert [e.stage for e in turn.events] == ["propose", "critique"]
     assert turn.events[-1].error and "rate limited" in turn.events[-1].error
     assert turn.final_answer is None
+
+
+def test_draft_labels_cover_any_roster_size():
+    assert squad._draft_label(0) == "Draft A"
+    assert squad._draft_label(25) == "Draft Z"
+    assert squad._draft_label(26) == "Draft AA"
+    assert squad._draft_label(27) == "Draft AB"
+
+
+def test_parallel_chains_overlap(fake_call):
+    """Both workers' proposals must be in flight at once: the barrier only releases
+    when both threads reach it, so a serial regression times the turn out."""
+    barrier = threading.Barrier(2)
+    seen_workers: set[str] = set()
+    guard = threading.Lock()
+
+    def caller(model, messages, run_cfg, *, role="", structured=False):
+        first_call_for_worker = False  # a worker role's first call is its propose stage
+        if role.startswith("worker"):
+            with guard:
+                if role not in seen_workers:
+                    seen_workers.add(role)
+                    first_call_for_worker = True
+        if first_call_for_worker:
+            barrier.wait(timeout=5)
+        return fake_call(model, messages, run_cfg, role=role, structured=structured)
+
+    turn = squad.run_turn(Conversation(), "task", make_config(max_parallel=2), caller=caller)
+    assert turn.final_answer is not None
+
+
+def test_parallel_stage_order_is_causal(fake_call):
+    """Under parallelism exact order is nondeterministic, but causality must hold:
+    each worker's chain in order, all revisions before any extraction (the wave
+    boundary), then cluster and judge."""
+    workers = [AgentConfig(model=f"prov/w{i}") for i in range(3)]
+    turn = squad.run_turn(
+        Conversation(), "task", make_config(max_parallel=3, workers=workers), caller=fake_call
+    )
+    stages = [e.stage for e in turn.events]
+    assert sorted(stages[:9]) == sorted(["propose", "critique", "revise"] * 3)
+    assert stages[9:] == ["extract", "extract", "extract", "cluster", "judge"]
+    for i in range(3):
+        role = f"worker_{i + 1}"
+        position = {
+            e.stage: idx
+            for idx, e in enumerate(turn.events)
+            if e.role in (role, f"critic->{role}", f"extractor->{role}")
+        }
+        assert position["propose"] < position["critique"] < position["revise"]
+
+
+def test_wide_roster_runs_and_pools_every_worker(fake_call):
+    """More workers than the old five-label cap, with queuing (workers > max_parallel)."""
+    workers = [AgentConfig(model=f"prov/worker-{i}") for i in range(7)]
+    turn = squad.run_turn(
+        Conversation(), "task", make_config(max_parallel=4, workers=workers), caller=fake_call
+    )
+    assert len(turn.events) == 7 * 3 + 7 + 2
+    judge_prompt = next(c["prompt"] for c in fake_call.calls if c["role"] == "judge")
+    for i in range(7):
+        assert f"unit from extractor->worker_{i + 1}" in judge_prompt
+
+
+def test_fail_fast_skips_unstarted_chains():
+    calls: list[str] = []
+
+    def boom(model, messages, run_cfg, *, role="", structured=False):
+        calls.append(role)
+        if role.startswith("critic"):
+            raise LLMError(role, model, "rate limited")
+        return f"{role} output"
+
+    workers = [AgentConfig(model=f"prov/w{i}") for i in range(3)]
+    conv = Conversation()
+    with pytest.raises(LLMError):
+        squad.run_turn(conv, "task", make_config(max_parallel=1, workers=workers), caller=boom)
+    # serial fail-fast: worker_1's critique fails, so workers 2 and 3 never start
+    assert calls == ["worker_1", "critic->worker_1"]
+    assert [e.stage for e in conv.turns[0].events] == ["propose", "critique"]
