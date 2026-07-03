@@ -1,18 +1,21 @@
 # lite squad
-Tool for working with a team of LLMs. Sometimes two, or six, heads are better than one.
+Tool for working with a team of LLMs. Sometimes two, or five, heads are better than one.
 
 ## Usage
-Install, and then use, at your command line:
+Install with pip:
 
     pip install litesquad
-    litesquad --web # to run interactive browser version (Dash)
 
-CLI run:
+Use in browser: 
+
+    litesquad --web 
+
+Use at command line:
 
     litesquad "plan such and such project"
     litesquad "such and such" --quick # get a quick answer, bypassing the squad
 
-litesquad can take a few minutes to run when not in deep think mode. There's a lot of LLM calls going on under the hood (see below). 
+litesquad takes a few minutes to run when not in deep think mode. There's a lot of LLM calls going on under the hood (see below). 
 
 Query is distributed to worker LLMs (gemini and sonnet direct, plus deepseek, mistral, and llama via OpenRouter). Another (gpt5) acts as a critic that gives feedback to the workers. They revise their response. An intermediate representation of these responses to extract their main content is extracted, and clustered into categories of suggestions. A judge (opus) converts these suggestions into a final coherent answer for the user. The independent worker chains run in parallel (the run.max_parallel config setting controls how many at once; set it to 1 for fully serial runs).
 
@@ -30,3 +33,4 @@ Offline test: `litesquad --smoke --mock`
 This provides an interface to an ensemble of LLMs to try to generate a better answer than with a single LLM. No agentic tool-usage, web calls from the LLMs. Just vanilla text processing.
 
 With apologies to [squad](https://github.com/bradygaster/squad). 
+
