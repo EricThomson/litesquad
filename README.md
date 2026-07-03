@@ -5,14 +5,16 @@ Tool for working with a team of LLMs. Sometimes two, or six, heads are better th
 Install, and then use, at your command line:
 
     pip install litesquad
+    litesquad --web # to run interactive browser version (Dash)
+
+CLI run:
+
     litesquad "plan such and such project"
     litesquad "such and such" --quick # get a quick answer, bypassing the squad
 
-    litesquad --web # to run interactive browser version (Dash)
+litesquad can take a few minutes to run when not in deep think mode. There's a lot of LLM calls going on under the hood (see below). 
 
-litesquad can take a few minutes to run when not in quick mode. There's a lot of LLM calls going on under the hood (see below). 
-
-Query is distibuted to three worker LLMs (gemini, gpt4.1-mini, sonnet). Another (gpt5) acts as a critic that gives feedback to the workers. They revise their response. An intermediate representation of these responses to extract their main content is extracted, and clustered into categories of suggestions. A judge (opus) converts these suggestions into a final coherent answer for the user. 
+Query is distibuted to worker LLMs (gemini, gpt4.1-mini, sonnet). Another (gpt5) acts as a critic that gives feedback to the workers. They revise their response. An intermediate representation of these responses to extract their main content is extracted, and clustered into categories of suggestions. A judge (opus) converts these suggestions into a final coherent answer for the user. 
 
 To run the default, you will need API keys for [Gemini](https://aistudio.google.com/app/apikey), [OpenAI](https://openai.com/index/openai-api/), and [Anthropic](https://platform.claude.com/docs/en/api/admin/api_keys/retrieve). Store your api keys in .env (or whatever). 
 
@@ -25,6 +27,6 @@ Offline test: `litesquad --smoke --mock`
 
 
 ### Caveats
-This provides an interface to an ensemble of LLMs to try to generate a better answer than with a single LLM. It currently doesn't do anything besides vanilla LLM calls: no agentic loops. 
+This provides an interface to an ensemble of LLMs to try to generate a better answer than with a single LLM. No agentic tool-usage, web calls from the LLMs. Just vanilla text processing.
 
 With apologies to [squad](https://github.com/bradygaster/squad). 
