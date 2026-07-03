@@ -15,6 +15,11 @@ dependencies = [
     "typer>=0.26.8",
 ]
 
+[project.optional-dependencies]
+web = [
+    "dash>=3.0",
+]
+
 [project.scripts]
 litesquad = "litesquad:main"
 litesquad-keys = "litesquad.check_keys:main"

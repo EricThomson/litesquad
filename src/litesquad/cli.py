@@ -103,8 +103,21 @@ def run(
     smoke: bool = typer.Option(
         False, "--smoke", help="Run one real turn on a fixed tiny prompt and exit (cheap end-to-end)."
     ),
+    web: bool = typer.Option(
+        False, "--web", help="Serve the web UI instead of the terminal (needs the 'web' extra)."
+    ),
+    port: int = typer.Option(8050, help="Port for the web UI (only used with --web)."),
 ) -> None:
     """Ask the ensemble (or, with --quick, just the judge), then take follow-ups."""
+    if web:
+        if task is not None:
+            console.print("[red]With --web, submit tasks in the browser, not on the command line.[/]")
+            raise typer.Exit(2)
+        from .web import serve  # lazy: dash is an optional extra
+
+        serve(port=port, mock=mock)
+        return
+
     load_env()
 
     cfg_path = paths.config_path()

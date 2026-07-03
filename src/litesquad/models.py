@@ -1,9 +1,10 @@
 """In-memory transcript models. Each :class:`TranscriptEvent` is one JSONL row."""
 
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 Stage = Literal["propose", "critique", "revise", "extract", "cluster", "judge", "reply"]
 
@@ -25,6 +26,36 @@ class TranscriptEvent(BaseModel):
 
     def to_jsonl(self) -> str:
         return self.model_dump_json()
+
+    @classmethod
+    def from_jsonl(cls, line: str) -> "TranscriptEvent":
+        return cls.model_validate_json(line)
+
+
+def load_events(path: Path) -> list[TranscriptEvent]:
+    """Read a transcript JSONL file back into events, skipping blank lines.
+
+    Reads whatever the file holds right now, so it works both on finished
+    transcripts and on one that a running turn is still appending to.
+    """
+    lines = path.read_text(encoding="utf-8").splitlines()
+    return [TranscriptEvent.from_jsonl(line) for line in lines if line.strip()]
+
+
+def load_events_lenient(path: Path) -> tuple[list[TranscriptEvent], int]:
+    """Like :func:`load_events`, but skips lines that don't validate, so one
+    foreign or outdated file can't fail the transcript browser whole.
+    Returns (events, skipped line count)."""
+    events: list[TranscriptEvent] = []
+    skipped = 0
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            events.append(TranscriptEvent.from_jsonl(line))
+        except ValidationError:
+            skipped += 1
+    return events, skipped
 
 
 class Turn(BaseModel):
