@@ -17,7 +17,7 @@ Use at command line:
 
 litesquad takes a few minutes to run when running in default (deep) mode. There's a lot of LLM calls going on under the hood.
 
-Query is distributed to worker LLMs (gemini and sonnet direct, plus deepseek, mistral, and llama via OpenRouter). Another (grok) acts as a critic that gives feedback to the workers. They revise their response. An intermediate representation of these responses is extracted to pull the content and clustered into categories of suggestions (gpt5). A judge (opus) converts these suggestions into a final coherent answer for the user. 
+Query is distributed to worker LLMs (gemini and sonnet direct, plus deepseek, mistral, and llama via OpenRouter). Another LLM acts as a critic that gives feedback to the workers. They revise their response. An intermediate representation of these responses is extracted to pull the content, and this is then converted into categories/clusters of suggestions. A final judge (opus) converts these suggestions into a final coherent answer for the user. 
 
 ## What about Fusion?
 After I pushed version 0.0.2 I found out about OpenRouter's [Fusion](https://openrouter.ai/blog/announcements/fusion-beats-frontier/).
