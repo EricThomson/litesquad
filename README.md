@@ -1,7 +1,5 @@
 # lite squad
-Tool for working with a team of LLMs. Sometimes two, or five, heads are better than one.
-
-
+Tool for working with a team of LLMs. Because sometimes two, or five, heads are better than one.
 
 ## Usage
 Install with pip:
@@ -24,7 +22,7 @@ Query is distributed to worker LLMs (gemini and sonnet direct, plus deepseek, mi
 ## What about Fusion?
 After I pushed version 0.0.2 I found out about OpenRouter's [Fusion](https://openrouter.ai/blog/announcements/fusion-beats-frontier/).
 
-It has the same goal as litesquad, but is built by a professional team that can actually maintain the product. When I did testing of litesquad vs Fusion, Fusion consistently beat litesquad. They both produce good results, but if you want to *use* something (versus play in a workbench) I would recommend Fusion. 
+It has the same goal as litesquad, and a similar architecture, but is built by a professional team that can actually maintain the product. When I did testing of litesquad vs Fusion, Fusion consistently beat litesquad. They both produce good results, but if you want to *use* something (versus play in a workbench) I would recommend Fusion. 
 
 Also, my guess is there will be a squadron of these applications within a couple of years. It's just too obvious a need. 
 
@@ -41,7 +39,7 @@ Check on specific models: `litesquad --check`
 Offline test: `litesquad --smoke --mock`
 
 ### Caveats
-This provides an interface to an swarm of LLMs to try to generate a better answer than when using a single LLM. No agentic tool-usage, such as web calls, from the LLMs. Just  reasoning. 
+This provides an interface to a swarm of LLMs to try to generate a better answer than when using a single LLM. Unlike Fusion, there is no tool-usage such as web calls from the LLMs. Just reasoning. 
 
 With apologies to [squad](https://github.com/bradygaster/squad). 
 
