@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "litesquad"
-version = "0.0.3"
+version = "0.0.4"
 description = "Lightweight tool for working with a team of LLMs"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
@@ -19,10 +19,6 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "rich>=15.0.0",
     "typer>=0.26.8",
-]
-
-[project.optional-dependencies]
-web = [
     # <4.2: Dash 4.2+ remounts every child whenever a callback writes a children
     # prop (open regression, plotly/dash#3846), which wipes DOM state like
     # <details> open/closed in the live view. Lift the cap when that issue closes.

@@ -736,19 +736,15 @@ wheels = [
 
 [[package]]
 name = "litesquad"
-version = "0.1.0"
+version = "0.0.4"
 source = { editable = "." }
 dependencies = [
+    { name = "dash" },
     { name = "litellm" },
     { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "rich" },
     { name = "typer" },
-]
-
-[package.optional-dependencies]
-web = [
-    { name = "dash" },
 ]
 
 [package.dev-dependencies]
@@ -759,14 +755,13 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "dash", marker = "extra == 'web'", specifier = ">=3.0,<4.2" },
+    { name = "dash", specifier = ">=3.0,<4.2" },
     { name = "litellm", specifier = ">=1.90.1" },
     { name = "pydantic", specifier = ">=2.13.4" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "rich", specifier = ">=15.0.0" },
     { name = "typer", specifier = ">=0.26.8" },
 ]
-provides-extras = ["web"]
 
 [package.metadata.requires-dev]
 dev = [

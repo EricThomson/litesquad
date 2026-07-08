@@ -65,7 +65,7 @@ def create_app(config: SquadConfig, runner: TurnRunner, *, mock: bool = False) -
         Output("run", "disabled"),
         Output("progress", "children"),
         Output("results", "children"),
-        Output("seen-count", "data"),
+        Output("turns-rendered", "data"),
         Input("run", "n_clicks"),
         Input("poll", "n_intervals"),
         State("task", "value"),
