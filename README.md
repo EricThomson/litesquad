@@ -32,11 +32,11 @@ Check on specific models: `litesquad --check`
 Offline test: `litesquad --smoke --mock`
 
 ### Caveats
-This provides an interface to a swarm of LLMs to try to generate a better answer than when using a single LLM. Unlike Fusion, there is no tool-usage such as web calls from the LLMs. Just reasoning. 
+This provides an interface to a swarm of LLMs to try to generate a better answer than when using a single LLM. There is no tool-usage such as web calls from the LLMs. Just reasoning. 
 
 With apologies to [squad](https://github.com/bradygaster/squad). 
 
-## What about Fusion?
+### What about Fusion?
 After I pushed a recent litesquad version, I found out about OpenRouter's [Fusion](https://openrouter.ai/blog/announcements/fusion-beats-frontier/).
 
 It has the same goal as litesquad, and a fairly similar architecture, but is built by a professional team that can maintain the product as their primary goal. 
@@ -44,3 +44,4 @@ It has the same goal as litesquad, and a fairly similar architecture, but is bui
 When I did testing of litesquad vs Fusion, they both produced good results. Often Fusion is better (its agents can crawl the web which is very nice). On some questions, I prefer the output of litesquad (for instance when I'm exploring answers to more open-ended topics and there is clearly no single best answer). I plan to use them both.  
 
 My guess is there will be a squadron of these applications within a couple of years. It's just too obvious a need, and an intrinsically interesting problem. 
+
