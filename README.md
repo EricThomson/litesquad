@@ -23,7 +23,9 @@ Query is distributed to worker LLMs (e.g., GPT, Gemini). Another LLM acts as a c
 To run properly, litesquad currently needs an [OpenRouter](https://openrouter.ai/keys) api key. One OpenRouter key reaches the whole openrouter.ai catalog (deepseek, mistral, llama, grok, qwen, ...), which is how the worker roster grows wide without a key per provider. Store your API key in `.env`.
 
 ### Basic tests
-To see if openrouter api key is set up and working against default models: `litesquad --check` 
+To see if openrouter api key is set up and working against default models:
+
+    litesquad --check 
 
 Offline test: `litesquad --smoke --mock`
 
@@ -32,14 +34,8 @@ This provides an interface to a swarm of LLMs to try to generate a better answer
 
 With apologies to [squad](https://github.com/bradygaster/squad). 
 
-### What about Fusion?
-After developing a beta version of litesquad, I found out about OpenRouter's [Fusion](https://openrouter.ai/blog/announcements/fusion-beats-frontier/). Fusion is very similar to litesquad, and is maintained by a professional team. Lately, Fusion hasn't been working for me, so I'm not sure if they are still maintaining it. 
-
-When I did testing of litesquad vs Fusion, they both produced good results. Often Fusion is better. On some questions, I prefer the output of litesquad (for instance for more open-ended personal topics when there is clearly no single best answer). 
-
-My guess is there will be a squadron of these applications within a couple of years. It's just too obvious a need, and an intrinsically interesting problem. 
-
 ### To do
-- Make it easier to select models. 
-- Add web search agent capabilities to litesquad:  make this a toggle. 
+- Consider adding web search capabilities to litesquad. This would be a major change, so will need to think about how to handle it. Not how/if I want to do this, so sleep on it for a while (the worry is we would lose heterogeneity among workers, so I'd need to do it right). 
 
+### What about Fusion?
+After developing a beta version of litesquad, I found out about OpenRouter's [Fusion](https://openrouter.ai/blog/announcements/fusion-beats-frontier/). Fusion is very similar to litesquad, and is maintained by a professional team. I'm not sure if it is still being maintained, but my guess is there will be lots of tools like this coming online in the near future -- it's just too obvious a need!
