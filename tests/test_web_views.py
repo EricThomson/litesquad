@@ -179,3 +179,27 @@ def test_transcript_view_handles_error_events():
     ]
     sections = views.transcript_view(events)
     assert len(sections) == 1  # smoke: error rows must not raise
+
+
+def _text(component) -> str:
+    """All the text inside a Dash component tree, concatenated."""
+    if isinstance(component, str):
+        return component
+    children = getattr(component, "children", None)
+    if children is None:
+        return ""
+    if not isinstance(children, list):
+        children = [children]
+    return "".join(_text(child) for child in children)
+
+
+def test_storage_note_says_where_the_session_and_config_live(tmp_path):
+    transcript = tmp_path / "transcripts" / "2026-10-15_120000_web.jsonl"
+    config_file = tmp_path / "config.toml"
+    text = _text(views.storage_note(transcript, config_file))
+    assert str(transcript) in text
+    assert str(config_file) in text
+
+
+def test_transcripts_folder_note_names_the_folder(tmp_path):
+    assert str(tmp_path) in _text(views.transcripts_folder_note(tmp_path))

@@ -47,6 +47,7 @@ def create_app(config: SquadConfig, runner: TurnRunner, *, mock: bool = False) -
     ], style={"paddingTop": "0.8rem"})
 
     browse_tab = html.Div([
+        views.transcripts_folder_note(paths.transcripts_dir()),
         dcc.Dropdown(id="transcript-pick", placeholder="Pick a past transcript..."),
         html.Div(id="transcript-view"),
     ], style={"paddingTop": "0.8rem"})
@@ -54,6 +55,7 @@ def create_app(config: SquadConfig, runner: TurnRunner, *, mock: bool = False) -
     app.layout = html.Div([
         html.H1("litesquad", style={"marginBottom": "0.2rem"}),
         views.config_header(config, mock),
+        views.storage_note(runner.transcript_path, paths.config_path()),
         dcc.Tabs(id="tabs", value="live", children=[
             dcc.Tab(label="Live run", value="live", children=live_tab),
             dcc.Tab(label="Transcripts", value="browse", children=browse_tab),

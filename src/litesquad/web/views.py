@@ -6,6 +6,8 @@ running turn look the same on the page. The browser additionally shows the
 prompt each stage received (show_prompts=True).
 """
 
+from pathlib import Path
+
 from dash import dcc, html
 
 from ..config import SquadConfig
@@ -61,6 +63,26 @@ def config_header(config: SquadConfig, mock: bool) -> html.Div:
         rows.append(html.Span("MOCK MODE - canned responses, no API calls",
                               style={**_BADGE, "background": "#fff3cd"}))
     return html.Div(rows, style={**_MUTED, "margin": "0.3rem 0 0.8rem"})
+
+
+def storage_note(transcript_path: Path, config_path: Path) -> html.Div:
+    """Where this session lives on disk: the transcript being written, and the config read.
+
+    The web UI always writes its transcript (it renders the live run from that file), so
+    this holds regardless of run.save_transcript.
+    """
+    return html.Div([
+        html.Div(["This session is saved to ", html.Code(str(transcript_path))]),
+        html.Div(["Models and settings: ", html.Code(str(config_path)),
+                  " (your overrides, merged over the built-in defaults)"]),
+    ], style={**_MUTED, "margin": "-0.4rem 0 0.8rem"})
+
+
+def transcripts_folder_note(folder: Path) -> html.Div:
+    """Where the past transcripts listed in the Transcripts tab live."""
+    return html.Div(["Every session's full record (each stage's prompt and output) is in ",
+                     html.Code(str(folder))],
+                    style={**_MUTED, "marginBottom": "0.5rem"})
 
 
 # Live status board glyphs: one look per state, colored dot/check/cross.
