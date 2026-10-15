@@ -48,7 +48,7 @@ model = "anthropic/claude-opus-5.5"
 
 # The critic is the quality floor, so it gets a flagship model, and one that is not also a
 # worker, so it never reviews its own drafts. A flagship spends more on hidden reasoning, and
-# a critique that runs out of budget aborts the turn, so it gets extra headroom.
+# a critique that runs out of budget drops that worker, so it gets extra headroom.
 [agents.critic]
 model = "openai/gpt-6-astra"
 max_tokens = 16000
@@ -77,12 +77,13 @@ max_tokens = 24000
 # reasoning_effort.
 #
 # The roster is built for maximum variability: one model per lab, so the workers' priors are
-# as independent as possible (different pretraining data and post-training, from US, Chinese,
-# and European labs). Other labs worth a slot: z-ai (glm), minimax, cohere, nvidia (nemotron).
+# as independent as possible (different pretraining data and post-training, from US and Chinese
+# labs). Other labs worth a slot: z-ai (glm), minimax, cohere, nvidia (nemotron); mistral and xai were
+# tried and cut (mistral burned its whole budget on hidden reasoning; grok defied plain instructions).
 #
 # Workers run at reasoning_effort = "low". Nearly every current model reasons, and unchecked
 # hidden reasoning can spend the whole max_tokens budget and return no visible answer, which
-# aborts the turn. Low keeps that in check; the critic and revision supply the depth.
+# drops that worker from the turn. Low keeps that in check; the critic and revision supply the depth.
 [[agents.workers]]
 model = "anthropic/claude-sonnet-5.5"
 reasoning_effort = "low"
@@ -97,10 +98,6 @@ reasoning_effort = "low"
 
 [[agents.workers]]
 model = "deepseek/deepseek-v4-pro-0813"
-reasoning_effort = "low"
-
-[[agents.workers]]
-model = "mistralai/mistral-large-4-0"
 reasoning_effort = "low"
 
 [[agents.workers]]

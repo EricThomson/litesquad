@@ -142,20 +142,84 @@ def test_per_agent_instructions_scoped_to_that_agent():
     assert worker2_systems and all("BE TERSE PLEASE" not in s for s in worker2_systems)
 
 
-def test_failed_stage_aborts_and_is_recorded():
-    def _boom(model, messages, run_cfg, *, role="", structured=False):
-        if role.startswith("critic"):
+def failing_caller(should_fail):
+    """A caller that raises for any role ``should_fail(role)`` accepts, else answers.
+
+    Structured calls get valid JSON so the synthesis stages run through.
+    """
+
+    def caller(model, messages, run_cfg, *, role="", structured=False):
+        if should_fail(role):
             raise LLMError(role, model, "rate limited")
+        if structured:
+            if "extract" in role:
+                return '{"units": [{"kind": "claim", "text": "unit from ' + role + '"}]}'
+            return '{"clusters": []}'
         return f"{role} output"
 
-    conv = Conversation()
-    with pytest.raises(LLMError):
-        squad.run_turn(conv, "anything", make_config(), caller=_boom)
+    return caller
 
+
+def four_workers() -> list[AgentConfig]:
+    return [AgentConfig(model=f"prov/w{i}") for i in range(4)]
+
+
+def test_turn_carries_on_without_a_failed_worker():
+    conv = Conversation()
+    caller = failing_caller(lambda role: role == "critic->worker_2")
+    turn = squad.run_turn(conv, "task", make_config(workers=four_workers()), caller=caller)
+
+    assert turn.final_answer  # the judge still answered
+    failed = [e for e in turn.events if e.error]
+    assert [(e.role, e.stage) for e in failed] == [("critic->worker_2", "critique")]
+    # worker_2 never revised or reached the extractor
+    assert not any(e.role == "worker_2" and e.stage == "revise" for e in turn.events)
+    assert not any(e.role == "extractor->worker_2" for e in turn.events)
+    content_map = next(e.output for e in turn.events if e.stage == "cluster")
+    assert "worker_3" in content_map and "worker_2" not in content_map
+
+
+def test_failed_extraction_drops_that_worker():
+    conv = Conversation()
+    caller = failing_caller(lambda role: role == "extractor->worker_1")
+    turn = squad.run_turn(conv, "task", make_config(workers=four_workers()), caller=caller)
+
+    assert turn.final_answer
+    content_map = next(e.output for e in turn.events if e.stage == "cluster")
+    assert "extractor->worker_1" not in content_map
+    assert "extractor->worker_4" in content_map
+
+
+def test_too_few_survivors_aborts():
+    conv = Conversation()
+    caller = failing_caller(lambda role: role in ("worker_1", "worker_3"))
+    with pytest.raises(squad.TooFewWorkersError) as exc:
+        squad.run_turn(conv, "task", make_config(workers=four_workers()), caller=caller)
+
+    assert "only 2 of 4 workers" in str(exc.value)
     turn = conv.turns[0]
-    assert [e.stage for e in turn.events] == ["propose", "critique"]
-    assert turn.events[-1].error and "rate limited" in turn.events[-1].error
     assert turn.final_answer is None
+    # every failure is still recorded, and the other chains ran to completion first
+    assert sorted(e.role for e in turn.events if e.error) == ["worker_1", "worker_3"]
+    assert sum(e.stage == "revise" for e in turn.events) == 2
+
+
+def test_survivor_minimum_counts_workers_dropped_at_extraction():
+    # 4 workers: one chain fails, then one extraction fails -> 2 left, below the minimum
+    conv = Conversation()
+    caller = failing_caller(lambda role: role in ("worker_1", "extractor->worker_2"))
+    with pytest.raises(squad.TooFewWorkersError) as exc:
+        squad.run_turn(conv, "task", make_config(workers=four_workers()), caller=caller)
+    assert "only 2 of 4 workers survived extraction" in str(exc.value)
+
+
+def test_small_roster_needs_every_worker():
+    # below MIN_SURVIVING_WORKERS the whole roster is required
+    conv = Conversation()
+    caller = failing_caller(lambda role: role == "worker_2")
+    with pytest.raises(squad.TooFewWorkersError):
+        squad.run_turn(conv, "task", make_config(), caller=caller)
+
 
 
 def test_content_map_carries_member_unit_texts():
@@ -277,21 +341,3 @@ def test_wide_roster_runs_and_pools_every_worker(fake_call):
     judge_prompt = next(c["prompt"] for c in fake_call.calls if c["role"] == "judge")
     for i in range(7):
         assert f"unit from extractor->worker_{i + 1}" in judge_prompt
-
-
-def test_fail_fast_skips_unstarted_chains():
-    calls: list[str] = []
-
-    def boom(model, messages, run_cfg, *, role="", structured=False):
-        calls.append(role)
-        if role.startswith("critic"):
-            raise LLMError(role, model, "rate limited")
-        return f"{role} output"
-
-    workers = [AgentConfig(model=f"prov/w{i}") for i in range(3)]
-    conv = Conversation()
-    with pytest.raises(LLMError):
-        squad.run_turn(conv, "task", make_config(max_parallel=1, workers=workers), caller=boom)
-    # serial fail-fast: worker_1's critique fails, so workers 2 and 3 never start
-    assert calls == ["worker_1", "critic->worker_1"]
-    assert [e.stage for e in conv.turns[0].events] == ["propose", "critique"]

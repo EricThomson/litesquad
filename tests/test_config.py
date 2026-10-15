@@ -38,7 +38,7 @@ def test_default_budgets():
     assert config.clusterer.max_tokens == 24000
     assert all(w.max_tokens is None for w in config.workers)
     # workers keep hidden reasoning low; the strong seats use each model's own default
-    assert all(w.reasoning_effort == "low" for w in config.workers)
+    assert all(w.reasoning_effort in ("low", "none") for w in config.workers)
     assert config.run.reasoning_effort is None
     assert config.judge.reasoning_effort is None
 

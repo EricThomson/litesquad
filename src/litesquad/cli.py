@@ -26,7 +26,7 @@ from .llm import (
     preflight,
 )
 from .models import Conversation, Stage, TranscriptEvent
-from .squad import run_quick, run_turn
+from .squad import TooFewWorkersError, run_quick, run_turn
 
 app = typer.Typer(add_completion=False, help="Ask a small ensemble of LLMs anything.")
 console = Console()
@@ -148,6 +148,11 @@ def _model_roles(config: SquadConfig) -> list[tuple[str, str]]:
         if role not in roles:  # two workers on one model still read as one "worker"
             roles.append(role)
     return [(model, ", ".join(roles)) for model, roles in roles_by_model.items()]
+
+
+def _failed_stages(turn) -> list[str]:
+    """The stages of a turn that failed but did not abort it (dropped workers), as text."""
+    return [f"{event.role} at {event.stage}" for event in turn.events if event.error]
 
 
 def _check_key() -> bool:
@@ -273,7 +278,7 @@ def run(
         transcript_path = _transcript_path(config.run.save_transcript)
         reporter = ConsoleReporter(transcript_path)
         try:
-            run_turn(Conversation(), SMOKE_PROMPT, config, reporter, caller=caller)
+            turn = run_turn(Conversation(), SMOKE_PROMPT, config, reporter, caller=caller)
         except Exception as exc:  # noqa: BLE001 - smoke surfaces ANY failure (call or save)
             console.print(f"[red]Smoke test FAILED: {exc}[/]")
             raise typer.Exit(1) from exc
@@ -281,6 +286,12 @@ def run(
             reporter.close()
         if transcript_path is not None:
             console.print(f"[dim]Transcript: {transcript_path}[/]")
+        # Stricter than a normal run, which carries on without failed workers: the smoke
+        # test exists to prove every stage works, so any dropped worker fails it.
+        failed = _failed_stages(turn)
+        if failed:
+            console.print(f"[red]Smoke test FAILED: workers dropped ({', '.join(failed)})[/]")
+            raise typer.Exit(1)
         console.print("[green]Smoke test passed - all stages produced output.[/]")
         raise typer.Exit(0)
 
@@ -309,9 +320,12 @@ def run(
     current_task = task
     while True:
         try:
-            run_one(conversation, current_task, config, reporter, caller=caller)
-        except LLMError as exc:
-            console.print(f"[red]Turn aborted: {exc}[/]")
+            turn = run_one(conversation, current_task, config, reporter, caller=caller)
+            failed = _failed_stages(turn)
+            if failed:
+                console.print(f"[yellow]Carried on without failed workers: {', '.join(failed)}[/]")
+        except (LLMError, TooFewWorkersError) as exc:
+            console.print(f"[red]Turn aborted: {escape(str(exc))}[/]")
         finally:
             reporter.close()
 

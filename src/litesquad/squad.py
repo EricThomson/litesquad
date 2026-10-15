@@ -16,7 +16,7 @@ through one lock so the parallelism never leaks into the data.
 
 import random
 import threading
-from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
+from concurrent.futures import ThreadPoolExecutor, wait
 from typing import Callable, Protocol
 
 from . import prompts
@@ -90,34 +90,34 @@ class NullReporter:
         pass
 
 
-class _CancelledChain(Exception):
-    """A parallel task was skipped because an earlier task already failed (fail-fast)."""
+# A turn carries on when some workers fail, but not with fewer than this many surviving
+# (or all of them, for a roster smaller than this): below it there is too little for
+# cross-response recurrence to mean anything.
+MIN_SURVIVING_WORKERS = 3
+
+
+class TooFewWorkersError(RuntimeError):
+    """Too many workers failed for the turn to continue."""
 
 
 def _run_parallel(tasks: list[Callable[[], object]], max_parallel: int) -> list:
-    """Run tasks on a thread pool; return their results in task order.
+    """Run tasks on a thread pool; return each task's outcome, in task order.
 
-    Fail-fast: the first failure marks the run aborted, so tasks that have not started yet
-    are skipped entirely (no model calls, no events), tasks already in flight finish and
-    their events still land in the transcript, and the failure with the lowest task index
-    is re-raised (deterministic, unlike first-by-wall-clock). The wait loop polls instead
-    of blocking so Ctrl-C reaches the main thread on Windows; an interrupt cancels the
-    queued tasks the same way before propagating, so only in-flight calls run out.
+    A task that raised an ``Exception`` is represented in the result list by that exception
+    instead of a value, so one failure never stops the others -- the caller decides what
+    to do with the survivors. The wait loop polls instead of blocking so Ctrl-C reaches the
+    main thread on Windows; an interrupt cancels the queued tasks before propagating, so
+    only in-flight calls run out.
 
-    With ``max_parallel=1`` tasks run one at a time in order, reproducing serial behavior
-    exactly (including a failure stopping everything after it).
+    With ``max_parallel=1`` tasks run one at a time, in order.
     """
-    aborted = threading.Event()
+    interrupted = threading.Event()
 
     def guarded(task: Callable[[], object]) -> Callable[[], object]:
         def run() -> object:
-            if aborted.is_set():
-                raise _CancelledChain()
-            try:
-                return task()
-            except BaseException:
-                aborted.set()
-                raise
+            if interrupted.is_set():
+                return None  # skipped after Ctrl-C; the interrupt propagates below
+            return task()
 
         return run
 
@@ -126,22 +126,46 @@ def _run_parallel(tasks: list[Callable[[], object]], max_parallel: int) -> list:
         try:
             pending = set(futures)
             while pending:
-                _, pending = wait(pending, timeout=0.5, return_when=FIRST_EXCEPTION)
+                _, pending = wait(pending, timeout=0.5)
         except BaseException:  # KeyboardInterrupt: drop the queue, let in-flight finish
-            aborted.set()
+            interrupted.set()
             for future in futures:
                 future.cancel()
             raise
 
-    failures = [
-        future.exception()
-        for future in futures
-        if not future.cancelled() and future.exception() is not None
-    ]
-    real_failures = [exc for exc in failures if not isinstance(exc, _CancelledChain)]
-    if real_failures:
-        raise real_failures[0]
-    return [future.result() for future in futures]
+    outcomes = []
+    for future in futures:
+        failure = future.exception()
+        if failure is not None and not isinstance(failure, Exception):
+            raise failure  # e.g. KeyboardInterrupt inside a task: never swallow it
+        outcomes.append(failure if failure is not None else future.result())
+    return outcomes
+
+
+def _survivors(
+    outcomes_by_worker: list[tuple[int, object]], stage_name: str, roster_size: int
+) -> list[tuple[int, object]]:
+    """Keep the (worker index, result) pairs whose task succeeded.
+
+    ``roster_size`` is the full roster, so workers dropped at an earlier stage still count
+    against the minimum.
+
+    Raises :class:`TooFewWorkersError` if fewer than :data:`MIN_SURVIVING_WORKERS` survive
+    (or fewer than the whole roster, when the roster is smaller than that). The failures
+    themselves were already recorded as error events by the stage that failed.
+    """
+    survivors = [(index, outcome) for index, outcome in outcomes_by_worker
+                 if not isinstance(outcome, Exception)]
+    required = min(MIN_SURVIVING_WORKERS, roster_size)
+    if len(survivors) < required:
+        failures = "\n".join(
+            f"  {outcome}" for _, outcome in outcomes_by_worker if isinstance(outcome, Exception)
+        )
+        raise TooFewWorkersError(
+            f"only {len(survivors)} of {roster_size} workers survived {stage_name} "
+            f"(need {required}):\n{failures}"
+        )
+    return survivors
 
 
 def _run_stage(
@@ -244,7 +268,7 @@ def run_turn(
 ) -> Turn:
     """Run one full ensemble turn, appending it to ``conversation``.
 
-    ``caller`` defaults to the real LiteLLM-backed model call; inject a stand-in
+    ``caller`` defaults to the real OpenRouter-backed model call; inject a stand-in
     (e.g. ``mock_call_model``) to run offline.
     """
     reporter = reporter or NullReporter()
@@ -282,8 +306,14 @@ def run_turn(
 
         return chain
 
-    revised: list[str] = _run_parallel(
+    # A worker whose chain fails (any of its three calls) is dropped and the turn carries on
+    # with the rest; its error is already in the transcript.
+    roster_size = len(config.workers)
+    chain_outcomes = _run_parallel(
         [worker_chain(i, worker) for i, worker in enumerate(config.workers)], max_parallel
+    )
+    revised: list[tuple[int, str]] = _survivors(
+        list(enumerate(chain_outcomes)), "propose/critique/revise", roster_size
     )
 
     # Synthesis (extract -> cluster -> judge). Extract each revised response into de-stylized
@@ -309,14 +339,19 @@ def run_turn(
 
         return extract
 
-    units_per_worker: list[list[dict]] = _run_parallel(
-        [extract_units(i, revision) for i, revision in enumerate(revised)], max_parallel
+    extract_outcomes = _run_parallel(
+        [extract_units(index, revision) for index, revision in revised], max_parallel
+    )
+    # A failed extraction drops its worker too: without units, nothing of it reaches the judge.
+    surviving_indices = [index for index, _ in revised]
+    units_per_worker: list[tuple[int, list[dict]]] = _survivors(
+        list(zip(surviving_indices, extract_outcomes)), "extraction", roster_size
     )
 
     # Pool the units on the main thread, in worker order, so unit ids and draft labels are
     # deterministic no matter how the parallel waves interleaved.
     idmap: dict[str, dict] = {}
-    for index, units in enumerate(units_per_worker):
+    for index, units in units_per_worker:
         for unit in units:
             uid = f"u{len(idmap)}"
             idmap[uid] = {
