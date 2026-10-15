@@ -46,20 +46,27 @@ max_parallel = 4
 [agents.judge]
 model = "anthropic/claude-opus-5.5"
 
+# The critic is the quality floor, so it gets a flagship model, and one that is not also a
+# worker, so it never reviews its own drafts. A flagship spends more on hidden reasoning, and
+# a critique that runs out of budget aborts the turn, so it gets extra headroom.
 [agents.critic]
-model = "openai/gpt-6.1-sol"
+model = "openai/gpt-6-astra"
+max_tokens = 16000
 
-# The extractor de-stylizes each revised response into content units (JSON). A mechanical
-# step, so a cheap model is fine as long as its JSON output is reliable.
+# The extractor and clusterer together are the distiller, and share one model that is not the
+# judge's: deciding which ideas count as the same is itself a judgment, so it stays out of the
+# judge's hands. The extractor de-stylizes each revised response into content units (JSON).
+# It is the only step between the workers' prose and the judge, so it is not a place to save
+# money: whatever it drops or blurs is lost for good.
 [agents.extractor]
-model = "openai/gpt-6-luna"
+model = "openai/gpt-6.1-sol"
 
 # The clusterer groups equivalent units across responses and flags conflicts, building the
 # content map the judge writes from. It makes no quality judgment (that is the judge's job).
 # Its load scales with roster width (every worker's units land in one pool), and a reasoning
 # model in this seat spends hidden budget before emitting the JSON, so it gets extra headroom.
 [agents.clusterer]
-model = "anthropic/claude-opus-5.5"
+model = "openai/gpt-6.1-sol"
 max_tokens = 24000
 
 # Each worker responds independently (blind to the others), the critic gives each one feedback,
@@ -85,7 +92,7 @@ model = "google/gemini-4-argon"
 reasoning_effort = "low"
 
 [[agents.workers]]
-model = "openai/gpt-6.1-sol"
+model = "openai/gpt-5.6-terra"
 reasoning_effort = "low"
 
 [[agents.workers]]
