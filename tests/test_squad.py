@@ -190,6 +190,34 @@ def test_failed_extraction_drops_that_worker():
     assert "extractor->worker_4" in content_map
 
 
+def test_unparseable_extraction_is_recorded_and_drops_that_worker():
+    def caller(model, messages, run_cfg, *, role="", structured=False):
+        if role == "extractor->worker_1":
+            return "not json at all"
+        return failing_caller(lambda _: False)(model, messages, run_cfg, role=role,
+                                               structured=structured)
+
+    conv = Conversation()
+    turn = squad.run_turn(conv, "task", make_config(workers=four_workers()), caller=caller)
+
+    assert turn.final_answer
+    # recorded as the extract stage's error, not as a success followed by a silent drop
+    extract_events = [e for e in turn.events if e.role == "extractor->worker_1"]
+    assert len(extract_events) == 1
+    assert extract_events[0].error and "could not parse JSON" in extract_events[0].error
+
+
+def test_a_bug_is_raised_not_hidden_behind_a_dropped_worker():
+    def caller(model, messages, run_cfg, *, role="", structured=False):
+        if role == "worker_1":
+            raise KeyError("a programming error, not a model failure")
+        return failing_caller(lambda _: False)(model, messages, run_cfg, role=role,
+                                               structured=structured)
+
+    with pytest.raises(KeyError):
+        squad.run_turn(Conversation(), "task", make_config(workers=four_workers()), caller=caller)
+
+
 def test_too_few_survivors_aborts():
     conv = Conversation()
     caller = failing_caller(lambda role: role in ("worker_1", "worker_3"))

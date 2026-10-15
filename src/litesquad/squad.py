@@ -153,13 +153,20 @@ def _survivors(
     Raises :class:`TooFewWorkersError` if fewer than :data:`MIN_SURVIVING_WORKERS` survive
     (or fewer than the whole roster, when the roster is smaller than that). The failures
     themselves were already recorded as error events by the stage that failed.
+
+    Only model failures (:class:`LLMError`) drop a worker. Any other exception is a bug in
+    litesquad, so it is re-raised with its original traceback instead of being hidden
+    behind a dropped worker.
     """
+    for _, outcome in outcomes_by_worker:
+        if isinstance(outcome, Exception) and not isinstance(outcome, LLMError):
+            raise outcome
     survivors = [(index, outcome) for index, outcome in outcomes_by_worker
-                 if not isinstance(outcome, Exception)]
+                 if not isinstance(outcome, LLMError)]
     required = min(MIN_SURVIVING_WORKERS, roster_size)
     if len(survivors) < required:
         failures = "\n".join(
-            f"  {outcome}" for _, outcome in outcomes_by_worker if isinstance(outcome, Exception)
+            f"  {outcome}" for _, outcome in outcomes_by_worker if isinstance(outcome, LLMError)
         )
         raise TooFewWorkersError(
             f"only {len(survivors)} of {roster_size} workers survived {stage_name} "
@@ -191,8 +198,8 @@ def _run_stage(
     transcript and the reporter always see one whole event at a time.
 
     ``transform`` post-processes the raw model output before it is stored/returned (used to
-    render the clusterer's JSON into the readable content map). A transform that raises aborts
-    the turn like any stage failure.
+    validate the extractor's JSON, and to render the clusterer's JSON into the readable
+    content map). A transform that raises fails the stage exactly like a failed call.
     """
     with lock:
         reporter.stage_start(stage, role, model)
@@ -324,18 +331,27 @@ def run_turn(
     def extract_units(index: int, revision: str) -> Callable[[], list[dict]]:
         def extract() -> list[dict]:
             role = f"extractor->worker_{index + 1}"
+
+            # Checked inside the stage (as its transform), so an unparseable reply is recorded
+            # as this stage's error and drops the worker visibly, rather than failing after a
+            # success event was already recorded.
+            def check_parses(raw: str) -> str:
+                try:
+                    json_list(raw, "units")
+                except ValueError as exc:
+                    raise LLMError(
+                        role, config.extractor.model, f"could not parse JSON: {exc}"
+                    ) from exc
+                return raw
+
             raw = _run_stage(
                 turn, reporter, _agent_run_cfg(run_cfg, config.extractor), caller, lock=lock,
                 stage="extract", role=role, model=config.extractor.model,
                 system=_system(prompts.EXTRACT_SYSTEM, config.extractor),
                 prompt=prompts.extract_prompt(task, revision), structured=True,
+                transform=check_parses,
             )
-            try:
-                return json_list(raw, "units")
-            except ValueError as exc:
-                raise LLMError(
-                    role, config.extractor.model, f"could not parse JSON: {exc}"
-                ) from exc
+            return json_list(raw, "units")
 
         return extract
 

@@ -10,6 +10,7 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.status import Status
+from rich.text import Text
 
 from . import paths
 from .config import RunConfig, SquadConfig, ensure_starter, load_config
@@ -25,7 +26,7 @@ from .llm import (
     model_catalog,
     preflight,
 )
-from .models import Conversation, Stage, TranscriptEvent
+from .models import Conversation, Stage, TranscriptEvent, Turn
 from .squad import TooFewWorkersError, run_quick, run_turn
 
 app = typer.Typer(add_completion=False, help="Ask a small ensemble of LLMs anything.")
@@ -74,7 +75,9 @@ class ConsoleReporter:
     def _panel(event: TranscriptEvent) -> Panel:
         title = f"{event.role} | {event.model}"
         if event.error:
-            return Panel(event.error, title=f"{title} (error)", border_style="red")
+            # Text, not a str: error messages start with "[role]", which Rich would
+            # otherwise read as a markup tag and silently drop.
+            return Panel(Text(event.error), title=f"{title} (error)", border_style="red")
         border = "green" if event.stage in ("judge", "reply") else "cyan"
         return Panel(Markdown(event.output), title=title, border_style=border)
 
@@ -150,7 +153,7 @@ def _model_roles(config: SquadConfig) -> list[tuple[str, str]]:
     return [(model, ", ".join(roles)) for model, roles in roles_by_model.items()]
 
 
-def _failed_stages(turn) -> list[str]:
+def _failed_stages(turn: Turn) -> list[str]:
     """The stages of a turn that failed but did not abort it (dropped workers), as text."""
     return [f"{event.role} at {event.stage}" for event in turn.events if event.error]
 
@@ -280,7 +283,7 @@ def run(
         try:
             turn = run_turn(Conversation(), SMOKE_PROMPT, config, reporter, caller=caller)
         except Exception as exc:  # noqa: BLE001 - smoke surfaces ANY failure (call or save)
-            console.print(f"[red]Smoke test FAILED: {exc}[/]")
+            console.print(f"[red]Smoke test FAILED: {escape(str(exc))}[/]")
             raise typer.Exit(1) from exc
         finally:
             reporter.close()
