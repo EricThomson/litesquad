@@ -58,12 +58,33 @@ def json_list(reply: str, key: str) -> list:
 
 
 class LLMError(RuntimeError):
-    """A model call failed. Carries the role and model for clear reporting."""
+    """A model call failed. Carries the role and model for clear reporting, and the
+    OpenRouter host that served the call when it is known."""
 
-    def __init__(self, role: str, model: str, message: str) -> None:
+    def __init__(self, role: str, model: str, message: str, served_by: str | None = None) -> None:
         self.role = role
         self.model = model
-        super().__init__(f"[{role}] {model}: {message}")
+        self.served_by = served_by
+        host = f" (served by {served_by})" if served_by else ""
+        super().__init__(f"[{role}] {model}: {message}{host}")
+
+
+class ModelReply(str):
+    """A model's text, plus ``served_by``: the OpenRouter host that served the call.
+
+    One model ID can be served by many hosts (OpenRouter routes each call to one of
+    them), and hosts can behave differently, so the transcript records which one
+    answered. A str subclass so the Caller seam stays plain text: callers, and every
+    fake caller in the tests, keep working with strings, and squad._run_stage reads
+    ``served_by`` when it is there.
+    """
+
+    served_by: str | None
+
+    def __new__(cls, text: str, served_by: str | None) -> "ModelReply":
+        reply = super().__new__(cls, text)
+        reply.served_by = served_by
+        return reply
 
 
 class MissingKeyError(RuntimeError):
@@ -164,8 +185,12 @@ def call_model(
         )
     except openai.APIError as exc:
         raise LLMError(role, model, str(exc)) from exc
+    # OpenRouter names the host that served the call in a top-level "provider" field. It is
+    # not in OpenRouter's documented response schema (observed in real responses), so read
+    # it defensively: None if it is ever missing.
+    served_by = (response.model_extra or {}).get("provider")
     if not response.choices:
-        raise LLMError(role, model, "OpenRouter returned no choices")
+        raise LLMError(role, model, "OpenRouter returned no choices", served_by)
     choice = response.choices[0]
     content = choice.message.content
     if not content:
@@ -175,11 +200,13 @@ def call_model(
                 f"spent all {run_cfg.max_tokens} max_tokens before any visible answer, most "
                 "likely on hidden reasoning; raise this agent's max_tokens or lower its "
                 "reasoning_effort",
+                served_by,
             )
         raise LLMError(
-            role, model, f"model returned an empty response (finish_reason={choice.finish_reason})"
+            role, model, f"model returned an empty response (finish_reason={choice.finish_reason})",
+            served_by,
         )
-    return content if structured else to_ascii(content)
+    return ModelReply(content if structured else to_ascii(content), served_by)
 
 
 def key_info() -> dict:

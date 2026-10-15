@@ -6,7 +6,7 @@ import pytest
 
 from litesquad import squad
 from litesquad.config import AgentConfig, RunConfig, SquadConfig
-from litesquad.llm import LLMError
+from litesquad.llm import LLMError, ModelReply
 from litesquad.models import Conversation
 
 
@@ -369,3 +369,19 @@ def test_wide_roster_runs_and_pools_every_worker(fake_call):
     judge_prompt = next(c["prompt"] for c in fake_call.calls if c["role"] == "judge")
     for i in range(7):
         assert f"unit from extractor->worker_{i + 1}" in judge_prompt
+
+
+def test_transcript_records_which_host_served_each_call():
+    def hosted(model, messages, run_cfg, *, role="", structured=False):
+        if role == "worker_2":
+            raise LLMError(role, model, "spent all max_tokens", served_by="SlowHost")
+        text = failing_caller(lambda _: False)(model, messages, run_cfg, role=role,
+                                               structured=structured)
+        return ModelReply(text, served_by="GoodHost")
+
+    workers = [AgentConfig(model=f"prov/w{i}") for i in range(4)]
+    turn = squad.run_turn(Conversation(), "task", make_config(workers=workers), caller=hosted)
+
+    failed = next(e for e in turn.events if e.error)
+    assert failed.role == "worker_2" and failed.served_by == "SlowHost"
+    assert all(e.served_by == "GoodHost" for e in turn.events if not e.error)

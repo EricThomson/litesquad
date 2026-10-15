@@ -207,16 +207,19 @@ def _run_stage(
         {"role": "system", "content": system},
         {"role": "user", "content": prompt},
     ]
+    served_by = None  # the OpenRouter host, when the caller reports it (call_model does)
     try:
         output = caller(model, messages, run_cfg, role=role, structured=structured)
+        served_by = getattr(output, "served_by", None)
         if transform is not None:
             output = transform(output)
-    except Exception as exc:  # noqa: BLE001 - record then re-raise to abort the turn
+    except Exception as exc:  # noqa: BLE001 - record, then re-raise: the caller drops a worker or aborts
         with lock:
             event = turn.add(
                 TranscriptEvent(
                     turn_index=turn.index, stage=stage, role=role, model=model,
                     prompt=prompt, task=turn.task, error=str(exc),
+                    served_by=getattr(exc, "served_by", None) or served_by,
                 )
             )
             reporter.stage_done(event)
@@ -225,7 +228,7 @@ def _run_stage(
         event = turn.add(
             TranscriptEvent(
                 turn_index=turn.index, stage=stage, role=role, model=model,
-                prompt=prompt, task=turn.task, output=output,
+                prompt=prompt, task=turn.task, output=output, served_by=served_by,
             )
         )
         reporter.stage_done(event)

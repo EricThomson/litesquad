@@ -43,10 +43,11 @@ def test_default_budgets():
     assert config.judge.reasoning_effort is None
 
 
-def test_max_parallel_class_default_matches_toml_default():
+def test_run_class_defaults_match_toml_defaults():
     # RunConfig() is constructed directly in a few places (e.g. --check), so the
-    # class default must not drift from the authoritative TOML value
+    # class defaults must not drift from the authoritative TOML values
     assert default_config().run.max_parallel == RunConfig().max_parallel == 4
+    assert default_config().run.max_tokens == RunConfig().max_tokens == 16000
 
 
 def test_missing_file_uses_defaults(tmp_path):

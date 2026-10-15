@@ -26,7 +26,8 @@ class FakeClient:
         choice = SimpleNamespace(
             message=SimpleNamespace(content=content), finish_reason=finish_reason
         )
-        self._response = SimpleNamespace(choices=[choice])
+        # model_extra holds OpenRouter's non-OpenAI fields, as on the real SDK response
+        self._response = SimpleNamespace(choices=[choice], model_extra={"provider": "FakeHost"})
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
 
     def _create(self, **request):
@@ -74,6 +75,16 @@ def test_reasoning_that_exhausts_max_tokens_names_the_fix(install_fake_client):
         call_model("org/model", [], RunConfig(max_tokens=100), role="worker_1")
     assert exc.value.role == "worker_1"
     assert "reasoning_effort" in str(exc.value)
+    # which host failed is in the message and on the error, so it can be diagnosed
+    assert exc.value.served_by == "FakeHost"
+    assert str(exc.value).endswith("(served by FakeHost)")
+
+
+def test_reply_carries_the_host_that_served_it(install_fake_client):
+    install_fake_client(content="an answer")
+    reply = call_model("org/model", [], RunConfig())
+    assert reply == "an answer"  # still just text to every caller
+    assert reply.served_by == "FakeHost"
 
 
 def test_catalog_entry_falls_back_from_unlisted_routing_suffix():

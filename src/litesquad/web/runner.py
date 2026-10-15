@@ -32,6 +32,17 @@ def expected_stage_count(config: SquadConfig, quick: bool) -> int:
     return workers * 3 + workers + 2
 
 
+def _fresh_transcript_path(folder: Path) -> Path:
+    """A new, unused ``<timestamp>_web.jsonl`` path in ``folder``."""
+    stamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    path = folder / f"{stamp}_web.jsonl"
+    suffix = 2
+    while path.exists():  # a new conversation started within the same second
+        path = folder / f"{stamp}_web-{suffix}.jsonl"
+        suffix += 1
+    return path
+
+
 @dataclass(frozen=True)
 class RunState:
     """Point-in-time snapshot of the runner, safe to hand to a UI callback."""
@@ -43,6 +54,8 @@ class RunState:
     # several stages can run at once. Each entry is (stage, role, model).
     in_flight: tuple[tuple[Stage, str, str], ...]
     error: str | None  # set when the last turn aborted
+    task: str = ""  # the message the current (or last) turn is answering
+    quick: bool = False  # whether that turn bypasses the squad (judge only)
 
 
 class WebReporter:
@@ -62,8 +75,9 @@ class WebReporter:
 class TurnRunner:
     """Owns the background thread, the conversation, and the shared run state.
 
-    One runner per server process; the conversation persists across turns so
-    follow-ups carry context, exactly like the CLI loop. ``start`` takes the
+    One runner per server process. The conversation persists across turns so
+    follow-ups carry context, exactly like the CLI loop, until :meth:`reset` starts
+    a new one (in a new transcript file). ``start`` takes the
     config per call: today every call passes the same loaded config, but this
     is the seam that later lets the UI hand in a modified roster per run
     (roadmap shift 2) without touching anything here.
@@ -75,8 +89,7 @@ class TurnRunner:
     def __init__(self, caller: Caller = call_model, transcript_path: Path | None = None) -> None:
         self._caller = caller
         if transcript_path is None:
-            stamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-            transcript_path = paths.transcripts_dir() / f"{stamp}_web.jsonl"
+            transcript_path = _fresh_transcript_path(paths.transcripts_dir())
         self.transcript_path = transcript_path
         self.conversation = Conversation()
         self._lock = threading.Lock()
@@ -86,6 +99,8 @@ class TurnRunner:
         self._stages_expected = 0
         self._in_flight: dict[tuple[str, str], tuple[Stage, str, str]] = {}
         self._error: str | None = None
+        self._task = ""
+        self._quick = False
 
     def start(self, task: str, config: SquadConfig, *, quick: bool = False) -> None:
         """Kick off one turn in the background. Raises RuntimeError if one is running."""
@@ -97,6 +112,8 @@ class TurnRunner:
             self._stages_expected = expected_stage_count(config, quick)
             self._in_flight.clear()
             self._error = None
+            self._task = task
+            self._quick = quick
         self._thread = threading.Thread(
             target=self._work, args=(task, config, quick), daemon=True, name="litesquad-turn"
         )
@@ -113,6 +130,30 @@ class TurnRunner:
             with self._lock:
                 self._running = False
                 self._in_flight.clear()
+
+    def reset(self) -> Path:
+        """Start a new conversation, in a new transcript file next to the current one.
+
+        Returns the previous transcript path (the old conversation stays saved there).
+        Raises RuntimeError if a turn is running.
+        """
+        with self._lock:
+            if self._running:
+                raise RuntimeError("a turn is still running; start a new conversation after it finishes")
+            previous = self.transcript_path
+            self.conversation = Conversation()
+            self.transcript_path = _fresh_transcript_path(previous.parent)
+            self._stages_done = 0
+            self._stages_expected = 0
+            self._error = None
+            self._task = ""
+            self._quick = False
+        return previous
+
+    def has_history(self) -> bool:
+        """True once a turn has finished with an answer: the next turn is then a follow-up
+        (squad.run_turn hands earlier answered turns to the workers and judge)."""
+        return any(turn.final_answer for turn in self.conversation.turns)
 
     def _note_stage_start(self, stage: Stage, role: str, model: str) -> None:
         with self._lock:
@@ -135,6 +176,8 @@ class TurnRunner:
                 stages_expected=self._stages_expected,
                 in_flight=tuple(self._in_flight.values()),
                 error=self._error,
+                task=self._task,
+                quick=self._quick,
             )
 
     def events(self) -> list[TranscriptEvent]:

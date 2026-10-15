@@ -35,6 +35,10 @@ _BADGE = {"background": "#e3ecf7", "borderRadius": "10px", "padding": "0.05rem 0
 _CONFLICT = {"color": "#c62828", "fontSize": "0.85rem", "marginLeft": "2.6rem"}
 _PRE = {"whiteSpace": "pre-wrap", "fontSize": "0.8rem", "background": "#f6f6f6",
         "padding": "0.5rem", "borderRadius": "4px", "overflowX": "auto"}
+# The user's own message, shown in full and read-only. Height-capped so a long prompt
+# scrolls inside its box instead of pushing the answer far down the page.
+_QUESTION = {**_PANEL, "background": "#f0f4fa", "whiteSpace": "pre-wrap",
+             "maxHeight": "12rem", "overflowY": "auto"}
 
 # One light tint per worker slot (cycled), so everything worker N produced --
 # proposal, its critique, revision -- reads as one card of one color.
@@ -43,6 +47,29 @@ _WORKER_TINTS = ["#eef4fb", "#eff8ef", "#fdf6ec", "#f5effa", "#eff7f7"]
 
 def notice(text: str) -> html.Div:
     return html.Div(text, style=_MUTED)
+
+
+def composer_label(has_history: bool) -> str:
+    """What the input box will do with its text: start fresh, or continue the thread."""
+    if not has_history:
+        return "Your question or task"
+    return ("Follow-up: the squad will see the conversation above. For something unrelated, "
+            "start a new conversation.")
+
+
+def running_label(quick: bool) -> str:
+    """Shown above the locked input box while its question runs."""
+    mode = "quick: judge only" if quick else "squad"
+    return (f"Running ({mode}). This question is now fixed; a fresh box for your follow-up "
+            "appears when it finishes.")
+
+
+def new_conversation_notice(previous_transcript: Path) -> html.Div:
+    """Confirms the reset, and says where the old conversation is kept."""
+    if not previous_transcript.exists():
+        return notice("Started a new conversation.")
+    return html.Div(["Started a new conversation. The previous one is saved in ",
+                     html.Code(str(previous_transcript))], style=_MUTED)
 
 
 def config_header(config: SquadConfig, mock: bool) -> html.Div:
@@ -338,20 +365,27 @@ def content_map_panel(event: TranscriptEvent, *, show_prompt: bool = False) -> h
     )
 
 
-def _turn_section(
-    events: list[TranscriptEvent], *, show_prompts: bool = False, heading: bool = True
-) -> html.Div:
-    """Everything one turn produced: worker cards, synthesis, final answer, any error.
+def _question_block(events: list[TranscriptEvent]) -> html.Div:
+    """The user's message for one turn, in full and read-only, and how it was run."""
+    turn = events[0].turn_index
+    quick = any(event.stage == "reply" for event in events)
+    mode = "quick (judge only)" if quick else "squad"
+    return html.Div([
+        html.Div(f"Turn {turn + 1} - {mode}", style={**_MUTED, "marginTop": "1rem"}),
+        html.Div(events[0].task, style=_QUESTION),
+    ], key=f"t{turn}-question")
+
+
+def _turn_section(events: list[TranscriptEvent], *, show_prompts: bool = False) -> html.Div:
+    """Everything one turn produced: the question, worker cards, synthesis, final answer,
+    any error.
 
     Every child carries a stable ``key``: the live tab re-renders this tree each time
     an event lands, and any unkeyed sibling would be remounted by React -- collapsing
     whatever cards the user had open mid-run.
     """
     turn = events[0].turn_index
-    children: list = []
-    if heading:
-        children.append(html.H3(f"Turn {turn + 1}: {_task_snippet(events[0].task)}",
-                                key=f"t{turn}-heading"))
+    children: list = [_question_block(events)]
     children.extend(_worker_panels(events, show_prompts=show_prompts))
     extract_panel = _extract_panel(events, show_prompts=show_prompts)
     if extract_panel is not None:
@@ -399,7 +433,7 @@ def transcript_view(events: list[TranscriptEvent]) -> list:
         html.Details(
             [html.Summary(f"Turn {turn_events[0].turn_index + 1}: "
                           f"{_task_snippet(turn_events[0].task)}"),
-             _turn_section(turn_events, show_prompts=True, heading=False)],
+             _turn_section(turn_events, show_prompts=True)],
             open=True,
         )
         for turn_events in _group_by_turn(events)

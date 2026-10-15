@@ -22,6 +22,7 @@ class TranscriptEvent(BaseModel):
     task: str = ""  # the turn's raw task; makes a transcript self-contained for replay
     output: str = ""
     error: str | None = None
+    served_by: str | None = None  # the OpenRouter host that answered, when known
     ts: str = Field(default_factory=_now)
 
     def to_jsonl(self) -> str:

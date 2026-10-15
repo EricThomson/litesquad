@@ -127,12 +127,20 @@ def _fake_turn_events(turn_index: int) -> list[TranscriptEvent]:
     ]
 
 
-def test_turn_sections_groups_by_turn_with_headings():
+def test_turn_sections_group_by_turn_each_led_by_its_question():
     events = _fake_turn_events(0) + _fake_turn_events(1)
     sections = views.turn_sections(events)
     assert len(sections) == 2
-    first_heading = sections[0].children.children[0]
-    assert first_heading.children.startswith("Turn 1:")
+    question = sections[1].children.children[0]
+    label, text = question.children
+    assert label.children == "Turn 2 - squad"
+    assert text.children == "task 1"
+
+
+def test_question_block_marks_quick_turns():
+    events = [_event(0, "reply", "judge")]
+    label, _ = views._question_block(events).children
+    assert label.children == "Turn 1 - quick (judge only)"
 
 
 def test_turn_sections_renders_aborted_turns_with_their_error():
@@ -144,14 +152,23 @@ def test_turn_sections_renders_aborted_turns_with_their_error():
     assert len(sections) == 1  # smoke: a dead turn still renders (error in the card)
 
 
-def test_turn_heading_truncates_long_tasks():
+def test_question_block_keeps_the_whole_task_but_snippets_truncate():
     long_task = "Design a logo.\n\n" + "Lots of detailed requirements here. " * 30
     events = [_event(0, "propose", "worker_1")]
     events[0].task = long_task
-    heading = views._turn_section(events).children[0]
-    assert len(heading.children) < 120
-    assert heading.children.endswith("...")
-    assert "\n" not in heading.children
+    # the thread shows the question in full (its box scrolls), line breaks intact
+    _, text = views._question_block(events).children
+    assert text.children == long_task
+    # the transcript browser's one-line summaries still truncate
+    snippet = views._task_snippet(long_task)
+    assert len(snippet) < 120 and snippet.endswith("...") and "\n" not in snippet
+
+
+def test_composer_and_running_labels_say_what_the_box_does():
+    assert views.composer_label(has_history=False) == "Your question or task"
+    assert views.composer_label(has_history=True).startswith("Follow-up")
+    assert views.running_label(quick=True).startswith("Running (quick: judge only).")
+    assert "squad" in views.running_label(quick=False)
 
 
 def test_worker_cards_sorted_by_number_not_completion_order():

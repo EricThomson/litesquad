@@ -162,3 +162,62 @@ def test_events_tolerates_torn_final_line(tmp_path):
     runner = TurnRunner(fake_call, transcript_path=path)
     events = runner.events()
     assert [e.stage for e in events] == ["propose"]
+
+
+def test_snapshot_carries_the_running_question_and_mode(tmp_path):
+    runner = TurnRunner(fake_call, transcript_path=tmp_path / "t.jsonl")
+    runner.start("What should I build first?", make_config(), quick=True)
+    runner.wait(timeout=10)
+    state = runner.snapshot()
+    # kept after the turn ends, so a page reload mid-run can show it locked in the box
+    assert state.task == "What should I build first?"
+    assert state.quick is True
+
+
+def test_has_history_only_after_an_answered_turn(tmp_path):
+    def judge_fails(model, messages, run_cfg, *, role="", structured=False):
+        if role == "judge":
+            raise LLMError(role, model, "rate limited")
+        return fake_call(model, messages, run_cfg, role=role, structured=structured)
+
+    runner = TurnRunner(judge_fails, transcript_path=tmp_path / "t.jsonl")
+    assert runner.has_history() is False
+    runner.start("First task", make_config(), quick=True)
+    runner.wait(timeout=10)
+    assert runner.has_history() is False  # aborted: no answer, so nothing to follow up on
+
+    runner._caller = fake_call
+    runner.start("Try again", make_config(), quick=True)
+    runner.wait(timeout=10)
+    assert runner.has_history() is True
+
+
+def test_reset_starts_a_new_conversation_in_a_new_file(tmp_path):
+    first_file = tmp_path / "first_web.jsonl"
+    runner = TurnRunner(fake_call, transcript_path=first_file)
+    runner.start("First task", make_config(), quick=True)
+    runner.wait(timeout=10)
+
+    previous = runner.reset()
+
+    assert previous == first_file and first_file.exists()  # the old conversation is kept
+    assert runner.transcript_path != first_file
+    assert runner.transcript_path.parent == tmp_path  # same folder as before
+    assert runner.conversation.turns == []
+    assert runner.has_history() is False
+    assert runner.events() == []  # the new file is empty until the next turn
+
+
+def test_reset_refuses_while_a_turn_runs(tmp_path):
+    release = threading.Event()
+
+    def slow_call(model, messages, run_cfg, *, role="", structured=False):
+        release.wait(timeout=10)
+        return fake_call(model, messages, run_cfg, role=role, structured=structured)
+
+    runner = TurnRunner(slow_call, transcript_path=tmp_path / "t.jsonl")
+    runner.start("Long task", make_config(), quick=True)
+    with pytest.raises(RuntimeError):
+        runner.reset()
+    release.set()
+    runner.wait(timeout=10)

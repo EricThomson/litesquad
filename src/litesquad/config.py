@@ -20,9 +20,11 @@ DEFAULT_CONFIG_TOML = """\
 # free, before a run fails partway through.
 
 [run]
-# Caps output per stage. Reasoning models spend part of this on hidden reasoning
-# before the visible answer, so keep it roomy.
-max_tokens = 8000
+# Caps output per call, and the cap covers hidden reasoning AND the visible answer
+# together. Long-form tasks get long drafts (4,000-7,000 tokens of visible text is
+# normal), so at 8000 a model that reasons a little longer than usual runs out before
+# answering. You pay only for tokens actually generated, so headroom is cheap.
+max_tokens = 16000
 save_transcript = true
 # Randomize the order the judge sees the responses so no worker is permanently
 # first (LLM judges have a primacy bias). Turn off for deterministic-order tests.
@@ -47,11 +49,9 @@ max_parallel = 4
 model = "anthropic/claude-opus-5.5"
 
 # The critic is the quality floor, so it gets a flagship model, and one that is not also a
-# worker, so it never reviews its own drafts. A flagship spends more on hidden reasoning, and
-# a critique that runs out of budget drops that worker, so it gets extra headroom.
+# worker, so it never reviews its own drafts.
 [agents.critic]
 model = "openai/gpt-6-astra"
-max_tokens = 16000
 
 # The extractor and clusterer together are the distiller, and share one model that is not the
 # judge's: deciding which ideas count as the same is itself a judgment, so it stays out of the
@@ -132,7 +132,7 @@ class AgentConfig(BaseModel):
 
 class RunConfig(BaseModel):
     temperature: float | None = None
-    max_tokens: int = 8000
+    max_tokens: int = 16000  # keep equal to the TOML default
     reasoning_effort: ReasoningEffort | None = None  # None = each model's own default
     save_transcript: bool = True
     shuffle: bool = True  # randomize the order the judge sees responses (kills primacy bias)
