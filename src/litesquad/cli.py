@@ -159,17 +159,13 @@ def _failed_stages(turn: Turn) -> list[str]:
 
 
 def _check_key() -> bool:
-    """Confirm the OpenRouter key is valid. Free: spends no tokens. Returns ok."""
+    """Confirm OpenRouter accepts the key. Free: spends no tokens. Returns ok."""
     try:
-        info = key_info()
+        key_info()
     except LLMError as exc:
         console.print(f"[red]✗[/] {escape(str(exc))}")
         return False
-    remaining = info.get("limit_remaining")
-    limit_note = "no spending limit" if remaining is None else f"${remaining:.2f} left on its limit"
-    console.print(
-        f"[green]✓[/] {OPENROUTER_KEY_VAR} - valid, ${info.get('usage', 0):.2f} spent, {limit_note}"
-    )
+    console.print(f"[green]✓[/] {OPENROUTER_KEY_VAR} is valid")
     return True
 
 

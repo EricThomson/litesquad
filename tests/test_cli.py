@@ -6,6 +6,7 @@ from rich.console import Console
 
 from litesquad import cli
 from litesquad.config import AgentConfig, SquadConfig
+from litesquad.llm import LLMError
 from litesquad.models import TranscriptEvent
 
 
@@ -103,3 +104,23 @@ def test_dead_and_unfinished_chains_still_print(monkeypatch):
     # worker_2's chain never finishes (turn aborted); close() must still show its work
     reporter.close()
     assert _panel_roles(recorder) == ["worker_1", "critic->worker_1", "worker_2"]
+
+
+def test_key_check_reports_valid_key(monkeypatch):
+    recorder = Console(record=True, width=200)
+    monkeypatch.setattr(cli, "console", recorder)
+    monkeypatch.setattr(cli, "key_info", lambda: {"label": "anything"})
+    assert cli._check_key() is True
+    assert "OPENROUTER_API_KEY is valid" in recorder.export_text()
+
+
+def test_key_check_reports_rejected_key(monkeypatch):
+    recorder = Console(record=True, width=200)
+    monkeypatch.setattr(cli, "console", recorder)
+
+    def rejected():
+        raise LLMError("check", "OPENROUTER_API_KEY", "Error code: 401")
+
+    monkeypatch.setattr(cli, "key_info", rejected)
+    assert cli._check_key() is False
+    assert "[check] OPENROUTER_API_KEY: Error code: 401" in recorder.export_text()
