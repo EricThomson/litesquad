@@ -6,13 +6,25 @@ from pathlib import Path
 import typer
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.markup import escape
 from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.status import Status
 
 from . import paths
 from .config import RunConfig, SquadConfig, ensure_starter, load_config
-from .llm import LLMError, MissingKeysError, call_model, load_env, mock_call_model, preflight
+from .llm import (
+    OPENROUTER_KEY_VAR,
+    LLMError,
+    MissingKeyError,
+    call_model,
+    catalog_entry,
+    key_info,
+    load_env,
+    mock_call_model,
+    model_catalog,
+    preflight,
+)
 from .models import Conversation, Stage, TranscriptEvent
 from .squad import run_quick, run_turn
 
@@ -138,24 +150,63 @@ def _model_roles(config: SquadConfig) -> list[tuple[str, str]]:
     return [(model, ", ".join(roles)) for model, roles in roles_by_model.items()]
 
 
-def _check_models(config: SquadConfig) -> bool:
-    """Ping each distinct configured model with a tiny request. Returns all-ok.
+def _check_key() -> bool:
+    """Confirm the OpenRouter key is valid. Free: spends no tokens. Returns ok."""
+    try:
+        info = key_info()
+    except LLMError as exc:
+        console.print(f"[red]✗[/] {escape(str(exc))}")
+        return False
+    remaining = info.get("limit_remaining")
+    limit_note = "no spending limit" if remaining is None else f"${remaining:.2f} left on its limit"
+    console.print(
+        f"[green]✓[/] {OPENROUTER_KEY_VAR} - valid, ${info.get('usage', 0):.2f} spent, {limit_note}"
+    )
+    return True
 
-    ``max_tokens`` is generous (not 5) because reasoning models (GPT-5,
-    Gemini 2.5 Pro) spend output budget on hidden reasoning before any visible
-    text — too small a cap returns empty content. The cap only prevents
-    truncation; actual usage stays tiny since the model stops after "ok".
+
+def _catalog_notes(entry: dict) -> str:
+    """Catalog facts worth flagging beside a model: an alias's current target, an expiry date."""
+    notes = []
+    if entry.get("alias_target"):
+        notes.append(f"alias for {entry['alias_target']['slug']}")
+    if entry.get("expiration_date"):
+        notes.append(f"[yellow]expires {entry['expiration_date']}[/]")
+    return f" [dim]|[/] {', '.join(notes)}" if notes else ""
+
+
+def _check_models(config: SquadConfig) -> bool:
+    """Look up each distinct configured model in OpenRouter's catalog, then ping it. Returns all-ok.
+
+    The catalog lookup is free and catches typos and retired models without spending a
+    call; it also flags announced expiry dates and shows what a ``~...-latest`` alias
+    currently points to. The ping's ``max_tokens`` is generous (not 5) because reasoning
+    models spend output budget on hidden reasoning before any visible text, and too small
+    a cap returns empty content. Actual usage stays tiny since the model stops after "ok".
     """
+    try:
+        catalog = model_catalog()
+    except LLMError as exc:
+        console.print(f"[red]✗[/] {escape(str(exc))}")
+        return False
     run_cfg = RunConfig(max_tokens=1024, save_transcript=False)
     messages = [{"role": "user", "content": "Reply with the single word: ok"}]
     all_ok = True
     for model, roles in _model_roles(config):
+        label = f"{model} [dim]({roles})[/]"
+        entry = catalog_entry(model, catalog)
+        if entry is None:
+            all_ok = False
+            console.print(f"[red]✗[/] {label} - not in the OpenRouter catalog (typo, or retired?)")
+            continue
+        notes = _catalog_notes(entry)
         try:
             reply = call_model(model, messages, run_cfg, role="check").strip()
-            console.print(f"[green]✓[/] {model} [dim]({roles})[/] — {reply[:40]}")
         except LLMError as exc:
             all_ok = False
-            console.print(f"[red]✗[/] {model} [dim]({roles})[/] — {exc}")
+            console.print(f"[red]✗[/] {label} - {escape(str(exc))}{notes}")
+            continue
+        console.print(f"[green]✓[/] {label} - {escape(reply[:40])}{notes}")
     return all_ok
 
 
@@ -163,13 +214,14 @@ def _check_models(config: SquadConfig) -> bool:
 def run(
     task: str = typer.Argument(None, help="Your question or task for the ensemble."),
     quick: bool = typer.Option(
-        False, "--quick", help="Talk to just the judge (Opus), skipping the ensemble."
+        False, "--quick", help="Talk to just the judge, skipping the ensemble."
     ),
     mock: bool = typer.Option(
         False, "--mock", help="Use canned offline responses; no API keys needed."
     ),
     check: bool = typer.Option(
-        False, "--check", help="Ping each configured model with a tiny request and exit."
+        False, "--check",
+        help="Verify the OpenRouter key, look up each configured model in the catalog, ping it, and exit.",
     ),
     smoke: bool = typer.Option(
         False, "--smoke", help="Run one real turn on a fixed tiny prompt and exit (cheap end-to-end)."
@@ -184,7 +236,7 @@ def run(
         if task is not None:
             console.print("[red]With --web, submit tasks in the browser, not on the command line.[/]")
             raise typer.Exit(2)
-        from .web import serve  # lazy: dash is an optional extra
+        from .web import serve  # lazy: keeps dash's import cost off plain CLI runs
 
         serve(port=port, mock=mock)
         return
@@ -200,19 +252,21 @@ def run(
 
     if check:
         try:
-            preflight(config)
-        except MissingKeysError as exc:
+            preflight()
+        except MissingKeyError as exc:
             console.print(f"[red]{exc}[/]")
             raise typer.Exit(1) from exc
-        console.print("Pinging configured models…")
+        if not _check_key():
+            raise typer.Exit(1)
+        console.print("Checking configured models against the OpenRouter catalog, then pinging each...")
         raise typer.Exit(0 if _check_models(config) else 1)
 
     if smoke:
         caller = mock_call_model if mock else call_model
         if not mock:
             try:
-                preflight(config)
-            except MissingKeysError as exc:
+                preflight()
+            except MissingKeyError as exc:
                 console.print(f"[red]{exc}[/]")
                 raise typer.Exit(1) from exc
         console.print(f'Smoke test: one turn on [dim]"{SMOKE_PROMPT}"[/]\n')
@@ -240,8 +294,8 @@ def run(
         console.print("[yellow]Running in --mock mode: canned responses, no API calls.[/]")
     else:
         try:
-            preflight(config)
-        except MissingKeysError as exc:
+            preflight()
+        except MissingKeyError as exc:
             console.print(f"[red]{exc}[/]")
             raise typer.Exit(1) from exc
 

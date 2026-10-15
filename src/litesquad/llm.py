@@ -1,27 +1,21 @@
-"""Thin LiteLLM wrapper with explicit, clear failure modes."""
+"""Thin OpenRouter wrapper with explicit, clear failure modes.
 
+Every model call goes through OpenRouter's OpenAI-compatible API using the
+openai SDK, so one key reaches every lab and model strings are OpenRouter's
+own model IDs, e.g. ``anthropic/claude-opus-5.5``.
+"""
+
+import functools
 import json
 import os
 
-import litellm
+import openai
 from dotenv import load_dotenv
 
-from .config import RunConfig, SquadConfig
+from .config import RunConfig
 
-# Quiet litellm's "Give Feedback / Get Help" + "LiteLLM.Info" banners on errors;
-# we surface a clean LLMError ourselves.
-litellm.suppress_debug_info = True
-
-# LiteLLM model strings are "<provider>/<model>"; map the provider to the env
-# var that must hold its API key. Unknown providers are not blocked.
-PROVIDER_KEYS: dict[str, str] = {
-    "anthropic": "ANTHROPIC_API_KEY",
-    "openai": "OPENAI_API_KEY",
-    "gemini": "GEMINI_API_KEY",
-    # One key for the whole openrouter.ai catalog (model strings look like
-    # "openrouter/<org>/<model>", so the provider segment is still the first).
-    "openrouter": "OPENROUTER_API_KEY",
-}
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+OPENROUTER_KEY_VAR = "OPENROUTER_API_KEY"
 
 
 # Map common non-ASCII typography to ASCII, then drop anything else, so model
@@ -72,37 +66,45 @@ class LLMError(RuntimeError):
         super().__init__(f"[{role}] {model}: {message}")
 
 
-class MissingKeysError(RuntimeError):
-    """Required API keys are not set in the environment."""
+class MissingKeyError(RuntimeError):
+    """The OpenRouter API key is not set in the environment."""
 
 
 def load_env() -> None:
     """Load a ``.env`` from the working tree into the environment.
 
     ``override=True`` so the project's ``.env`` wins over any pre-existing
-    (possibly stale) shell/Windows environment variable of the same name —
+    (possibly stale) shell/Windows environment variable of the same name;
     otherwise an old exported key silently shadows the one you just edited.
     """
     load_dotenv(override=True)
 
 
-def _provider(model: str) -> str:
-    return model.split("/", 1)[0] if "/" in model else model
-
-
-def preflight(config: SquadConfig) -> None:
-    """Raise :class:`MissingKeysError` if any required provider key is unset."""
-    missing: dict[str, str] = {}  # env var -> provider
-    for model in config.models():
-        provider = _provider(model)
-        key = PROVIDER_KEYS.get(provider)
-        if key and not os.environ.get(key):
-            missing[key] = provider
-    if missing:
-        lines = "\n".join(f"  {key}  (for {provider} models)" for key, provider in missing.items())
-        raise MissingKeysError(
-            "Missing API key(s). Set them in your environment or a .env file:\n" + lines
+def preflight() -> None:
+    """Raise :class:`MissingKeyError` if the OpenRouter API key is unset."""
+    if not os.environ.get(OPENROUTER_KEY_VAR):
+        raise MissingKeyError(
+            f"Missing API key. Set {OPENROUTER_KEY_VAR} in your environment or a .env file\n"
+            "(create one at https://openrouter.ai/keys)."
         )
+
+
+@functools.cache
+def openrouter_client() -> openai.OpenAI:
+    """The one shared OpenRouter client, built on first use.
+
+    Shared because the client is thread-safe and pools connections across the
+    parallel worker chains. Built lazily so :func:`load_env` has already run,
+    and so offline runs (the mock caller, tests) never construct it.
+    """
+    preflight()
+    return openai.OpenAI(
+        base_url=OPENROUTER_BASE_URL,
+        api_key=os.environ[OPENROUTER_KEY_VAR],
+        # Retry transient failures (429s, 5xx, dropped connections) with backoff.
+        # Matters because parallel worker chains burst concurrent calls.
+        max_retries=2,
+    )
 
 
 def mock_call_model(
@@ -132,33 +134,81 @@ def mock_call_model(
 def call_model(
     model: str, messages: list[dict], run_cfg: RunConfig, *, role: str = "", structured: bool = False
 ) -> str:
-    """Call ``model`` and return its text. Wraps failures in :class:`LLMError`.
+    """Call ``model`` through OpenRouter and return its text. Wraps failures in :class:`LLMError`.
 
     With ``structured=True`` the model is asked for JSON (``response_format``) and the raw
-    content is returned unchanged -- no ASCII coercion, which would corrupt JSON strings. That
-    param is dropped for providers that don't support it (and openrouter forwards it, where the
-    routed provider may silently ignore it), so callers must parse tolerantly either way.
+    content is returned unchanged -- no ASCII coercion, which would corrupt JSON strings.
+    OpenRouter routes such a request to a host that supports ``response_format`` when one
+    exists and otherwise ignores the param, so callers must parse tolerantly either way.
+    Params a model does not support (e.g. temperature on most Anthropic and OpenAI models)
+    are likewise ignored by OpenRouter rather than rejected.
     """
     params = {
         "model": model,
         "messages": messages,
         "max_tokens": run_cfg.max_tokens,
-        # Silently drop params a given model rejects (e.g. temperature on
-        # Opus 4.7+ / GPT-5) instead of erroring.
-        "drop_params": True,
-        # Retry transient failures (429s, blips) inside litellm. Matters now
-        # that parallel worker chains burst a provider with concurrent calls.
-        "num_retries": 2,
     }
     if structured:
         params["response_format"] = {"type": "json_object"}
     if run_cfg.temperature is not None:
         params["temperature"] = run_cfg.temperature
+    # OpenRouter-only request fields go in extra_body, outside the openai SDK's typed params.
+    openrouter_fields = {}
+    if run_cfg.reasoning_effort is not None:
+        # OpenRouter's documented, unified reasoning control, which it translates per provider.
+        # The SDK's top-level reasoning_effort param is OpenAI's own API field, not this one.
+        openrouter_fields["reasoning"] = {"effort": run_cfg.reasoning_effort}
     try:
-        response = litellm.completion(**params)
-    except Exception as exc:  # noqa: BLE001 - surface any provider error uniformly
+        response = openrouter_client().chat.completions.create(
+            **params, extra_body=openrouter_fields or None
+        )
+    except openai.APIError as exc:
         raise LLMError(role, model, str(exc)) from exc
-    content = response.choices[0].message.content
+    if not response.choices:
+        raise LLMError(role, model, "OpenRouter returned no choices")
+    choice = response.choices[0]
+    content = choice.message.content
     if not content:
-        raise LLMError(role, model, "model returned an empty response")
+        if choice.finish_reason == "length":
+            raise LLMError(
+                role, model,
+                f"spent all {run_cfg.max_tokens} max_tokens before any visible answer, most "
+                "likely on hidden reasoning; raise this agent's max_tokens or lower its "
+                "reasoning_effort",
+            )
+        raise LLMError(
+            role, model, f"model returned an empty response (finish_reason={choice.finish_reason})"
+        )
     return content if structured else to_ascii(content)
+
+
+def key_info() -> dict:
+    """OpenRouter's record for the configured key (label, usage, limit_remaining, ...).
+
+    Free: it spends no tokens, so it is the cheap way to confirm the key is valid.
+    """
+    try:
+        return openrouter_client().get("/key", cast_to=object)["data"]
+    except openai.APIError as exc:
+        raise LLMError("check", OPENROUTER_KEY_VAR, str(exc)) from exc
+
+
+def model_catalog() -> dict[str, dict]:
+    """OpenRouter's public model catalog, keyed by model ID. Free: it spends no tokens."""
+    try:
+        models = openrouter_client().get("/models", cast_to=object)["data"]
+    except openai.APIError as exc:
+        raise LLMError("check", "openrouter.ai/models", str(exc)) from exc
+    return {entry["id"]: entry for entry in models}
+
+
+def catalog_entry(model: str, catalog: dict[str, dict]) -> dict | None:
+    """The catalog entry for a configured model ID, or None if OpenRouter does not list it.
+
+    Routing shortcuts such as ``:nitro`` or ``:floor`` are valid suffixes that the catalog
+    does not list separately, so a suffixed ID that is not listed falls back to its base model.
+    """
+    if model in catalog:
+        return catalog[model]
+    base_model = model.split(":", 1)[0]
+    return catalog.get(base_model)

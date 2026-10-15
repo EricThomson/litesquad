@@ -25,6 +25,36 @@ def test_model_roles_orders_pipeline_and_merges_shared_models():
     ]
 
 
+def test_check_models_flags_catalog_problems_without_pinging_unknown_ids(monkeypatch):
+    recorder = Console(record=True, width=200)
+    monkeypatch.setattr(cli, "console", recorder)
+    catalog = {
+        "prov/known": {"id": "prov/known"},
+        "prov/retiring": {"id": "prov/retiring", "expiration_date": "2026-10-20"},
+    }
+    monkeypatch.setattr(cli, "model_catalog", lambda: catalog)
+    pinged: list[str] = []
+
+    def fake_ping(model, messages, run_cfg, *, role="", structured=False):
+        pinged.append(model)
+        return "ok"
+
+    monkeypatch.setattr(cli, "call_model", fake_ping)
+    config = SquadConfig(
+        judge=AgentConfig(model="prov/known"),
+        critic=AgentConfig(model="prov/known"),
+        extractor=AgentConfig(model="prov/known"),
+        clusterer=AgentConfig(model="prov/known"),
+        workers=[AgentConfig(model="prov/retiring"), AgentConfig(model="prov/typo")],
+    )
+
+    assert cli._check_models(config) is False  # the unknown ID fails the check
+    assert pinged == ["prov/retiring", "prov/known"]  # no call spent on an unlisted ID
+    output = recorder.export_text()
+    assert "expires 2026-10-20" in output
+    assert "prov/typo (worker) - not in the OpenRouter catalog" in output
+
+
 def _event(stage: str, role: str, **kwargs) -> TranscriptEvent:
     return TranscriptEvent(
         turn_index=0, stage=stage, role=role, model="prov/m", prompt="p", task="t",

@@ -195,6 +195,28 @@ def test_per_agent_max_tokens_overrides_run_default():
     assert budgets["judge"] == config.run.max_tokens
 
 
+def test_per_agent_reasoning_effort_overrides_run_default():
+    efforts: dict[str, list[str | None]] = {}
+
+    def record(model, messages, run_cfg, *, role="", structured=False):
+        efforts.setdefault(role, []).append(run_cfg.reasoning_effort)
+        if structured:
+            if "extract" in role:
+                return '{"units": [{"kind": "claim", "text": "u"}]}'
+            return '{"clusters": []}'
+        return f"{role} output"
+
+    config = make_config()
+    config.run.reasoning_effort = "medium"
+    config.workers[0].reasoning_effort = "low"
+    squad.run_turn(Conversation(), "task", config, caller=record)
+
+    # the override covers both of the worker's calls (propose, then revise)
+    assert efforts["worker_1"] == ["low", "low"]
+    assert efforts["worker_2"] == ["medium", "medium"]
+    assert efforts["judge"] == ["medium"]
+
+
 def test_draft_labels_cover_any_roster_size():
     assert squad._draft_label(0) == "Draft A"
     assert squad._draft_label(25) == "Draft Z"

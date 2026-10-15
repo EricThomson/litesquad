@@ -7,17 +7,21 @@ user's file only needs the handful of things they want to change.
 
 import tomllib
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from . import paths
 
 DEFAULT_CONFIG_TOML = """\
-# litesquad default squad. Models are LiteLLM model strings.
+# litesquad default squad. Every model is an OpenRouter model ID, copied exactly as
+# https://openrouter.ai/models shows it (e.g. anthropic/claude-opus-5.5). After changing
+# one, run `litesquad --check`: it flags unknown, retired, and soon-to-expire IDs for
+# free, before a run fails partway through.
 
 [run]
-# Caps output per stage. Reasoning models (GPT-5, Gemini 2.5 Pro) spend part of
-# this on hidden reasoning before the visible answer, so keep it roomy.
+# Caps output per stage. Reasoning models spend part of this on hidden reasoning
+# before the visible answer, so keep it roomy.
 max_tokens = 8000
 save_transcript = true
 # Randomize the order the judge sees the responses so no worker is permanently
@@ -28,57 +32,77 @@ shuffle = true
 # speed up wide rosters but hit providers harder: the critic model receives
 # roughly this many concurrent requests.
 max_parallel = 4
-# temperature is omitted: frontier models (Opus 4.7+, GPT-5) reject it with a 400.
-# Set it only if every model in your squad supports it (Sonnet, Gemini, Opus 4.6-).
+# reasoning_effort sets how much hidden reasoning a model does before answering: one of
+# max, xhigh, high, medium, low, minimal, none. OpenRouter translates it per provider (an
+# effort level for OpenAI and Gemini, a thinking budget carved out of max_tokens for
+# Anthropic). Left unset, each model uses its own default. Set here, it applies to every
+# agent that does not set its own.
+# reasoning_effort = "medium"
+# temperature is omitted: many current models (Anthropic and OpenAI among them) do not
+# accept it, and OpenRouter silently ignores it for those, so it only reaches the rest.
 # temperature = 0.4
 
 # The judge writes the final answer from the clustered content map (extract -> cluster -> judge).
 [agents.judge]
-model = "anthropic/claude-opus-4-8"
+model = "anthropic/claude-opus-5.5"
 
 [agents.critic]
-model = "openai/gpt-5"
+model = "openai/gpt-6.1-sol"
 
-# The extractor de-stylizes each revised response into content units (JSON). A mechanical step,
-# so a cheap model is fine -- swap to openai/gpt-4.1-mini to cut cost.
+# The extractor de-stylizes each revised response into content units (JSON). A mechanical
+# step, so a cheap model is fine as long as its JSON output is reliable.
 [agents.extractor]
-model = "openai/gpt-5"
+model = "openai/gpt-6-luna"
 
 # The clusterer groups equivalent units across responses and flags conflicts, building the
 # content map the judge writes from. It makes no quality judgment (that is the judge's job).
 # Its load scales with roster width (every worker's units land in one pool), and a reasoning
 # model in this seat spends hidden budget before emitting the JSON, so it gets extra headroom.
 [agents.clusterer]
-model = "anthropic/claude-opus-4-8"
+model = "anthropic/claude-opus-5.5"
 max_tokens = 24000
 
 # Each worker responds independently (blind to the others), the critic gives each one feedback,
 # and the worker revises. Then the revised answers are extracted into units, clustered into a
 # content map, and the judge writes the final answer from it. Any agent may add an
-# `instructions` string that is appended to its system prompt, and a `max_tokens` that
-# overrides [run] max_tokens for its own calls -- e.g. a reasoning model clustering a wide
-# roster's units can need max_tokens = 24000 while the workers stay at the run default.
+# `instructions` string that is appended to its system prompt, a `max_tokens` that overrides
+# [run] max_tokens for its own calls, and a `reasoning_effort` that overrides [run]
+# reasoning_effort.
+#
+# The roster is built for maximum variability: one model per lab, so the workers' priors are
+# as independent as possible (different pretraining data and post-training, from US, Chinese,
+# and European labs). Other labs worth a slot: z-ai (glm), minimax, cohere, nvidia (nemotron).
+#
+# Workers run at reasoning_effort = "low". Nearly every current model reasons, and unchecked
+# hidden reasoning can spend the whole max_tokens budget and return no visible answer, which
+# aborts the turn. Low keeps that in check; the critic and revision supply the depth.
 [[agents.workers]]
-model = "anthropic/claude-sonnet-4-6"
+model = "anthropic/claude-sonnet-5.5"
+reasoning_effort = "low"
 
 [[agents.workers]]
-model = "gemini/gemini-2.5-pro"
-
-# openrouter/* workers: one OPENROUTER_API_KEY reaches every provider on
-# openrouter.ai (deepseek, mistral, llama, grok, qwen, ...), which is how the
-# roster grows wide without needing a key per provider. Prefer non-reasoning
-# models as workers here: through OpenRouter a reasoning model can spend the
-# whole max_tokens budget on hidden reasoning and return empty content. If you
-# do add one, tell it to answer tersely -- instructions cap the visible answer
-# reliably, the hidden reasoning only partly.
-[[agents.workers]]
-model = "openrouter/deepseek/deepseek-chat"
+model = "google/gemini-4-argon"
+reasoning_effort = "low"
 
 [[agents.workers]]
-model = "openrouter/mistralai/mistral-large"
+model = "openai/gpt-6.1-sol"
+reasoning_effort = "low"
 
 [[agents.workers]]
-model = "openrouter/meta-llama/llama-3.3-70b-instruct"
+model = "deepseek/deepseek-v4-pro-0813"
+reasoning_effort = "low"
+
+[[agents.workers]]
+model = "mistralai/mistral-large-4-0"
+reasoning_effort = "low"
+
+[[agents.workers]]
+model = "qwen/qwen3.8-max-0902"
+reasoning_effort = "low"
+
+[[agents.workers]]
+model = "moonshotai/kimi-k3"
+reasoning_effort = "low"
 """
 
 _STARTER_HEADER = """\
@@ -88,16 +112,22 @@ _STARTER_HEADER = """\
 
 """
 
+# OpenRouter's unified reasoning levels (https://openrouter.ai/docs/use-cases/reasoning-tokens).
+# A Literal so a typo in config.toml fails at load time, not as a provider error mid-run.
+ReasoningEffort = Literal["max", "xhigh", "high", "medium", "low", "minimal", "none"]
+
 
 class AgentConfig(BaseModel):
     model: str
     instructions: str | None = None  # optional, appended to this agent's system prompt
     max_tokens: int | None = None  # optional, overrides run.max_tokens for this agent's calls
+    reasoning_effort: ReasoningEffort | None = None  # optional, overrides run.reasoning_effort
 
 
 class RunConfig(BaseModel):
     temperature: float | None = None
     max_tokens: int = 8000
+    reasoning_effort: ReasoningEffort | None = None  # None = each model's own default
     save_transcript: bool = True
     shuffle: bool = True  # randomize the order the judge sees responses (kills primacy bias)
     max_parallel: int = 4  # concurrent worker chains (1 = serial); keep equal to the TOML default

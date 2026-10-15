@@ -46,17 +46,22 @@ def _system(base: str, agent: AgentConfig) -> str:
 
 
 def _agent_run_cfg(run_cfg: RunConfig, agent: AgentConfig) -> RunConfig:
-    """The run config for one agent's calls: its own max_tokens wins if set.
+    """The run config for one agent's calls: its own max_tokens and reasoning_effort win if set.
 
     Roles need different headroom -- a reasoning model clustering a wide roster's
     units burns far more of the budget than a worker writing one answer.
     """
-    if agent.max_tokens is None:
+    agent_overrides = {
+        "max_tokens": agent.max_tokens,
+        "reasoning_effort": agent.reasoning_effort,
+    }
+    set_overrides = {key: value for key, value in agent_overrides.items() if value is not None}
+    if not set_overrides:
         return run_cfg
-    return run_cfg.model_copy(update={"max_tokens": agent.max_tokens})
+    return run_cfg.model_copy(update=set_overrides)
 
 
-# A model caller: same signature as litellm-backed ``call_model``. Injectable so
+# A model caller: same signature as the OpenRouter-backed ``call_model``. Injectable so
 # the CLI can run a mock (offline) squad without provider credentials.
 Caller = Callable[..., str]
 

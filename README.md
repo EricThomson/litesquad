@@ -17,17 +17,14 @@ Use at command line:
 
 litesquad takes a few minutes to run when running in default (deep) mode. There's a lot of LLM calls going on under the hood.
 
-Query is distributed to worker LLMs (gemini and sonnet direct, plus deepseek, mistral, and llama via OpenRouter). Another LLM acts as a critic that gives feedback to the workers. They revise their response. An intermediate representation of these responses is extracted to pull the content, and this is then converted into categories/clusters of suggestions. A final judge (opus) converts these suggestions into a final coherent answer for the user. 
+Query is distributed to worker LLMs (e.g., GPT, Gemini). Another LLM acts as a critic that gives feedback to the workers. They revise their response. An intermediate representation of these responses is extracted to pull the content, and this is then converted into categories/clusters of suggestions. A final frontier judge model converts these suggestions into a final coherent answer for the user. 
 
 ### So. Many. APIs.
-To run properly, litesquad currently needs API keys for [Gemini](https://aistudio.google.com/app/apikey), [OpenAI](https://openai.com/index/openai-api/), [Anthropic](https://platform.claude.com/docs/en/api/admin/api_keys/retrieve), and [OpenRouter](https://openrouter.ai/keys). One OpenRouter key reaches the whole openrouter.ai catalog (deepseek, mistral, llama, grok, qwen, ...), which is how the worker roster grows wide without a key per provider. You can store your API keys in `.env`.
+To run properly, litesquad currently needs an [OpenRouter](https://openrouter.ai/keys) api key. One OpenRouter key reaches the whole openrouter.ai catalog (deepseek, mistral, llama, grok, qwen, ...), which is how the worker roster grows wide without a key per provider. You can store your API key in `.env`.
 
-**Todo**: replace with OpenRouter API key only.
 
 ### Basic tests
-To see if api keys are working (from activated env):  `python -m litesquad.check_keys`
-
-Check on specific models: `litesquad --check` 
+To see if openrouter api key is set up: `litesquad --check` 
 
 Offline test: `litesquad --smoke --mock`
 
@@ -37,11 +34,16 @@ This provides an interface to a swarm of LLMs to try to generate a better answer
 With apologies to [squad](https://github.com/bradygaster/squad). 
 
 ### What about Fusion?
-After I pushed a recent litesquad version, I found out about OpenRouter's [Fusion](https://openrouter.ai/blog/announcements/fusion-beats-frontier/).
+After developing a beta version of litesquad, I found out about OpenRouter's [Fusion](https://openrouter.ai/blog/announcements/fusion-beats-frontier/).
 
-It has the same goal as litesquad, and a fairly similar architecture, but is built by a professional team that can maintain the product as their primary goal. 
+Fusion has the same goal as litesquad, and a fairly similar architecture (though it is more sophisticated, and built by a professional team). Unfortunately, Fusion lately has not been working for me: I'm not sure if openrouter is still maintaining it. 
 
-When I did testing of litesquad vs Fusion, they both produced good results. Often Fusion is better (its agents can crawl the web which is very nice). On some questions, I prefer the output of litesquad (for instance when I'm exploring answers to more open-ended topics and there is clearly no single best answer). I plan to use them both.  
+When I did testing of litesquad vs Fusion, they both produced good results. Often Fusion is better. On some questions, I prefer the output of litesquad (for instance for more open-ended personal topics when there is clearly no single best answer). 
 
 My guess is there will be a squadron of these applications within a couple of years. It's just too obvious a need, and an intrinsically interesting problem. 
+
+### To do
+- Just do openrouter instead of multiple api tokens that are a pain to maintain. 
+- Make it easier to select models. 
+- Add web search agent capabilities to litesquad:  make this a toggle. 
 

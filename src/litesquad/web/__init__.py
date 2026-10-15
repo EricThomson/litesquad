@@ -1,28 +1,18 @@
-"""litesquad web UI, an optional extra: uv pip install "litesquad[web]".
+"""litesquad web UI, served by ``litesquad --web``.
 
 Everything here is additive: the core pipeline never imports this package,
 and the CLI imports it lazily, only when ``litesquad --web`` is used.
 """
 
+from .. import paths
+from ..config import ensure_starter, load_config
+from ..llm import MissingKeyError, call_model, load_env, mock_call_model, preflight
+from .app import create_app
+from .runner import TurnRunner
+
 
 def serve(port: int = 8050, mock: bool = False, debug: bool = False) -> None:
     """Start the web UI server on localhost; blocks until interrupted."""
-    try:
-        import dash  # noqa: F401 - presence check only
-    except ModuleNotFoundError:
-        raise SystemExit(
-            'The web UI needs the "web" extra. Install it with:\n'
-            '  uv pip install "litesquad[web]"'
-        )
-
-    # Imported here, after the dash check, so a missing extra gives the
-    # friendly message above instead of a traceback.
-    from .. import paths
-    from ..config import ensure_starter, load_config
-    from ..llm import MissingKeysError, call_model, load_env, mock_call_model, preflight
-    from .app import create_app
-    from .runner import TurnRunner
-
     load_env()
     cfg_path = paths.config_path()
     if ensure_starter(cfg_path):
@@ -34,8 +24,8 @@ def serve(port: int = 8050, mock: bool = False, debug: bool = False) -> None:
         print("Running in --mock mode: canned responses, no API calls.")
     else:
         try:
-            preflight(config)
-        except MissingKeysError as exc:
+            preflight()
+        except MissingKeyError as exc:
             raise SystemExit(str(exc))
 
     runner = TurnRunner(caller)

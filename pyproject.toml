@@ -14,7 +14,6 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "litellm>=1.90.1",
     "pydantic>=2.13.4",
     "python-dotenv>=1.0.0",
     "rich>=15.0.0",
@@ -23,11 +22,11 @@ dependencies = [
     # prop (open regression, plotly/dash#3846), which wipes DOM state like
     # <details> open/closed in the live view. Lift the cap when that issue closes.
     "dash>=3.0,<4.2",
+    "openai>=3.31.0",
 ]
 
 [project.scripts]
 litesquad = "litesquad:main"
-litesquad-keys = "litesquad.check_keys:main"
 
 [dependency-groups]
 dev = [
