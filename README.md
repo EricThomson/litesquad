@@ -36,7 +36,7 @@ This provides an interface to a swarm of LLMs to try to generate a better answer
 With apologies to [squad](https://github.com/bradygaster/squad). 
 
 ### To do
-- Consider adding web search capabilities to litesquad. This would be a major change, so will need to think about how to handle it. Not clear we want this, as we will likely lose heterogeneity among workers.
+Consider adding web search capabilities to litesquad. This would be a major change, so will need to think about how to handle it. Not clear we want this, as we will likely lose heterogeneity among workers, and that is sort of the point!
 
 ### What about Fusion?
 After developing a beta version of litesquad, I found out about OpenRouter's [Fusion](https://openrouter.ai/blog/announcements/fusion-beats-frontier/). Fusion is very similar to litesquad, and is maintained by a professional team. I'm not sure if Fusion is still being maintained, but my guess is there will be lots of tools like this coming online in the near future!
