@@ -1,6 +1,8 @@
 # lite squad
 Tool for working with a team of LLMs. Because sometimes two, or five, heads are better than one.
 
+With apologies to [squad](https://github.com/bradygaster/squad). 
+
 ## Usage
 Install with pip:
 
@@ -32,8 +34,6 @@ Offline test: `litesquad --smoke --mock`
 
 ### Caveats
 This provides an interface to a swarm of LLMs to try to generate a better answer than when using a single LLM. There is no tool-usage such as web calls from the LLMs. Just reasoning. 
-
-With apologies to [squad](https://github.com/bradygaster/squad). 
 
 ### To do
 Consider adding web search capabilities to litesquad. This would be a major change, so will need to think about how to handle it. Not clear we want this, as we will likely lose heterogeneity among workers, and that is sort of the point!
