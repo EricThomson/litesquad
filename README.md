@@ -8,7 +8,7 @@ Install with pip:
 
     pip install litesquad
 
-Open application in browser (easiest): 
+Open application in browser (recommended): 
 
     litesquad --web 
 
@@ -20,7 +20,9 @@ To use at command line:
 litesquad takes a few minutes to run when running in default (deep) mode. There's a lot of LLM calls going on under the hood.
 
 ### How it works
-Query is distributed to worker LLMs (e.g., GPT, Gemini). Another LLM acts as a critic that gives feedback to the workers. They revise their responses. An intermediate representation of these responses is extracted, and this is converted into suggestion clusters. A final frontier judge model converts these suggestions into a final coherent answer for the user. 
+Query is distributed to worker LLMs (e.g., GPT, Gemini). Another LLM acts as a critic that gives feedback to the workers. They revise their responses. An intermediate representation of these responses is extracted, and this is converted into suggestion clusters. 
+
+A final frontier judge model converts these suggestions into a final coherent answer for the user. In the web interface, this can be downloaded as a standalone file for later perusal. 
 
 ### API key management
 To run properly, litesquad currently needs an [OpenRouter](https://openrouter.ai/keys) api key. One OpenRouter key reaches the whole openrouter.ai catalog (deepseek, mistral, llama, etc). Store your API key in `.env`.

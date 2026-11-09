@@ -11,7 +11,8 @@ from pathlib import Path
 from dash import dcc, html
 
 from ..config import SquadConfig
-from ..models import Stage, TranscriptEvent
+from ..export import answer_filename, answer_markdown
+from ..models import Stage, TranscriptEvent, final_event
 from .runner import RunState
 
 STAGE_LABEL: dict[Stage, str] = {
@@ -39,6 +40,8 @@ _PRE = {"whiteSpace": "pre-wrap", "fontSize": "0.8rem", "background": "#f6f6f6",
 # scrolls inside its box instead of pushing the answer far down the page.
 _QUESTION = {**_PANEL, "background": "#f0f4fa", "whiteSpace": "pre-wrap",
              "maxHeight": "12rem", "overflowY": "auto"}
+_SAVE_BUTTON = {"marginTop": "0.6rem", "padding": "0.2rem 0.8rem", "fontSize": "0.85rem",
+                "cursor": "pointer"}
 
 # One light tint per worker slot (cycled), so everything worker N produced --
 # proposal, its critique, revision -- reads as one card of one color.
@@ -376,9 +379,31 @@ def _question_block(events: list[TranscriptEvent]) -> html.Div:
     ], key=f"t{turn}-question")
 
 
-def _turn_section(events: list[TranscriptEvent], *, show_prompts: bool = False) -> html.Div:
-    """Everything one turn produced: the question, worker cards, synthesis, final answer,
-    any error.
+def _save_answer_control(turn_events: list[TranscriptEvent], transcript_name: str,
+                         view: str) -> html.Div:
+    """The final answer's "Save as markdown" button, plus the two pieces it needs on the
+    page: a Store holding the export (built here, at render time) and the Download that
+    hands it to the browser. app.py's save callback pairs the three by matching ids.
+
+    The ids carry the view ("live" or "browse") as well as the turn number, because both
+    tabs can show the same turn at once and every id on the page must be unique.
+    """
+    turn = turn_events[0].turn_index
+    return html.Div([
+        html.Button("Save as markdown", n_clicks=0, style=_SAVE_BUTTON,
+                    id={"type": "save-answer", "view": view, "turn": turn}),
+        dcc.Store(id={"type": "answer-export", "view": view, "turn": turn},
+                  data={"filename": answer_filename(transcript_name, turn),
+                        "text": answer_markdown(turn_events)}),
+        dcc.Download(id={"type": "answer-download", "view": view, "turn": turn}),
+    ])
+
+
+def _turn_section(events: list[TranscriptEvent], *, transcript_name: str, view: str,
+                  show_prompts: bool = False) -> html.Div:
+    """Everything one turn produced: the question, worker cards, synthesis, final answer
+    (with its save button), any error. ``transcript_name`` names the saved answer's file;
+    ``view`` ("live" or "browse") keeps the save button's ids unique across the two tabs.
 
     Every child carries a stable ``key``: the live tab re-renders this tree each time
     an event lands, and any unkeyed sibling would be remounted by React -- collapsing
@@ -393,14 +418,14 @@ def _turn_section(events: list[TranscriptEvent], *, show_prompts: bool = False) 
     for event in events:
         if event.stage == "cluster" and not event.error:
             children.append(content_map_panel(event, show_prompt=show_prompts))
-    for event in events:
-        if event.stage in ("judge", "reply") and not event.error:
-            body: list = [html.H4(f"Final answer ({event.model})",
-                                  style={"margin": "0 0 0.4rem"})]
-            if show_prompts:
-                body.append(_prompt_details(event))
-            body.append(dcc.Markdown(event.output))
-            children.append(html.Div(body, style=_FINAL, key=f"t{turn}-final"))
+    final = final_event(events)
+    if final is not None:
+        body: list = [html.H4(f"Final answer ({final.model})", style={"margin": "0 0 0.4rem"})]
+        if show_prompts:
+            body.append(_prompt_details(final))
+        body.append(dcc.Markdown(final.output))
+        body.append(_save_answer_control(events, transcript_name, view))
+        children.append(html.Div(body, style=_FINAL, key=f"t{turn}-final"))
     for index, event in enumerate(events):
         if event.error:
             children.append(html.Div(
@@ -410,8 +435,9 @@ def _turn_section(events: list[TranscriptEvent], *, show_prompts: bool = False) 
     return html.Div(children)
 
 
-def turn_sections(events: list[TranscriptEvent]) -> list[html.Div]:
-    """One grouped section per turn, in turn order, for the live tab.
+def turn_sections(events: list[TranscriptEvent], transcript_name: str) -> list[html.Div]:
+    """One grouped section per turn, in turn order, for the live tab. ``transcript_name``
+    is the file the events come from (it names saved answers).
 
     The live tab renders a turn exactly once, after it finishes: while a run
     streams, only the progress line updates. Dash 4.2+ remounts the whole
@@ -420,20 +446,23 @@ def turn_sections(events: list[TranscriptEvent]) -> list[html.Div]:
     on the page that a later write could disturb.
     """
     return [
-        html.Div(_turn_section(turn_events), key=f"turn-{turn_events[0].turn_index}")
+        html.Div(_turn_section(turn_events, transcript_name=transcript_name, view="live"),
+                 key=f"turn-{turn_events[0].turn_index}")
         for turn_events in _group_by_turn(events)
     ]
 
 
-def transcript_view(events: list[TranscriptEvent]) -> list:
-    """The browser view: same layout as the live tab, plus every stage's prompt."""
+def transcript_view(events: list[TranscriptEvent], transcript_name: str) -> list:
+    """The browser view: same layout as the live tab, plus every stage's prompt.
+    ``transcript_name`` is the file being browsed (it names saved answers)."""
     if not events:
         return [notice("Empty transcript.")]
     return [
         html.Details(
             [html.Summary(f"Turn {turn_events[0].turn_index + 1}: "
                           f"{_task_snippet(turn_events[0].task)}"),
-             _turn_section(turn_events, show_prompts=True)],
+             _turn_section(turn_events, transcript_name=transcript_name, view="browse",
+                           show_prompts=True)],
             open=True,
         )
         for turn_events in _group_by_turn(events)

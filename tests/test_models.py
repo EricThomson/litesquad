@@ -1,6 +1,6 @@
 """Transcript (de)serialization tests."""
 
-from litesquad.models import TranscriptEvent, load_events, load_events_lenient
+from litesquad.models import TranscriptEvent, final_event, load_events, load_events_lenient
 
 
 def make_event(**overrides) -> TranscriptEvent:
@@ -33,3 +33,12 @@ def test_lenient_load_skips_foreign_lines(tmp_path):
     events, skipped = load_events_lenient(path)
     assert events == [good, good]
     assert skipped == 2
+
+
+def test_final_event_is_the_last_successful_judge_or_reply():
+    judge = make_event(stage="judge", role="judge", output="the answer")
+    assert final_event([make_event(), judge]) == judge
+    reply = make_event(stage="reply", role="judge", output="quick answer")
+    assert final_event([reply]) == reply
+    failed_judge = make_event(stage="judge", role="judge", output="", error="timed out")
+    assert final_event([make_event(), failed_judge]) is None

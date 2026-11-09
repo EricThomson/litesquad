@@ -59,6 +59,15 @@ def load_events_lenient(path: Path) -> tuple[list[TranscriptEvent], int]:
     return events, skipped
 
 
+def final_event(turn_events: list[TranscriptEvent]) -> TranscriptEvent | None:
+    """The event holding one turn's final answer, or None if the turn never got one
+    (it aborted). Squad turns end in "judge", quick turns in "reply"."""
+    for event in reversed(turn_events):
+        if event.stage in ("judge", "reply") and not event.error:
+            return event
+    return None
+
+
 class Turn(BaseModel):
     index: int
     task: str
@@ -70,11 +79,8 @@ class Turn(BaseModel):
 
     @property
     def final_answer(self) -> str | None:
-        # deep turns end in "judge", quick turns in "reply"
-        for event in reversed(self.events):
-            if event.stage in ("judge", "reply") and not event.error:
-                return event.output
-        return None
+        final = final_event(self.events)
+        return final.output if final is not None else None
 
 
 class Conversation(BaseModel):

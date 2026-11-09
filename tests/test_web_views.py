@@ -4,6 +4,8 @@ import pytest
 
 pytest.importorskip("dash")
 
+from dash.development.base_component import Component  # noqa: E402
+
 from litesquad.config import AgentConfig, SquadConfig  # noqa: E402
 from litesquad.models import TranscriptEvent  # noqa: E402
 from litesquad.web import views  # noqa: E402
@@ -129,7 +131,7 @@ def _fake_turn_events(turn_index: int) -> list[TranscriptEvent]:
 
 def test_turn_sections_group_by_turn_each_led_by_its_question():
     events = _fake_turn_events(0) + _fake_turn_events(1)
-    sections = views.turn_sections(events)
+    sections = views.turn_sections(events, "t_web.jsonl")
     assert len(sections) == 2
     question = sections[1].children.children[0]
     label, text = question.children
@@ -148,7 +150,7 @@ def test_turn_sections_renders_aborted_turns_with_their_error():
         _event(0, "propose", "worker_1"),
         _event(0, "critique", "critic->worker_1", output="", error="rate limited"),
     ]
-    sections = views.turn_sections(events)
+    sections = views.turn_sections(events, "t_web.jsonl")
     assert len(sections) == 1  # smoke: a dead turn still renders (error in the card)
 
 
@@ -185,7 +187,8 @@ def test_worker_cards_sorted_by_number_not_completion_order():
 
 def test_every_turn_section_child_is_keyed():
     # unkeyed siblings get remounted on live re-render, collapsing open cards
-    children = views._turn_section(_fake_turn_events(0)).children
+    children = views._turn_section(_fake_turn_events(0), transcript_name="t_web.jsonl",
+                                   view="live").children
     assert all(getattr(child, "key", None) for child in children)
 
 
@@ -194,7 +197,7 @@ def test_transcript_view_handles_error_events():
         _event(0, "propose", "worker_1"),
         _event(0, "critique", "critic->worker_1", output="", error="rate limited"),
     ]
-    sections = views.transcript_view(events)
+    sections = views.transcript_view(events, "t_web.jsonl")
     assert len(sections) == 1  # smoke: error rows must not raise
 
 
@@ -220,3 +223,36 @@ def test_storage_note_says_where_the_session_and_config_live(tmp_path):
 
 def test_transcripts_folder_note_names_the_folder(tmp_path):
     assert str(tmp_path) in _text(views.transcripts_folder_note(tmp_path))
+
+
+def _pattern_ids(node) -> list[dict]:
+    """Every pattern-matching (dict) id in a component tree, in render order."""
+    found: list[dict] = []
+    if isinstance(node, (list, tuple)):
+        for child in node:
+            found.extend(_pattern_ids(child))
+    elif isinstance(node, Component):  # Store and Download have no children prop
+        if isinstance(getattr(node, "id", None), dict):
+            found.append(node.id)
+        found.extend(_pattern_ids(getattr(node, "children", None)))
+    return found
+
+
+def test_final_answer_carries_a_save_control_unique_to_its_tab():
+    events = _fake_turn_events(0)
+    live_ids = _pattern_ids(views.turn_sections(events, "t_web.jsonl"))
+    browse_ids = _pattern_ids(views.transcript_view(events, "t_web.jsonl"))
+    assert {i["type"] for i in live_ids} == {"save-answer", "answer-export", "answer-download"}
+    assert all(i["view"] == "live" and i["turn"] == 0 for i in live_ids)
+    # both tabs can show the same turn at once, so their ids must never collide
+    assert not {tuple(sorted(i.items())) for i in live_ids} & {
+        tuple(sorted(i.items())) for i in browse_ids
+    }
+
+
+def test_aborted_turn_has_nothing_to_save():
+    events = [
+        _event(0, "propose", "worker_1"),
+        _event(0, "judge", "judge", output="", error="judge timed out"),
+    ]
+    assert _pattern_ids(views.turn_sections(events, "t_web.jsonl")) == []

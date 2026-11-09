@@ -35,6 +35,9 @@ def _layout_ids(node, acc: set) -> set:
 
 
 def _referenced_ids(callback: dict) -> set:
+    """The plain string ids a callback names. Pattern-matching ids (serialized as JSON
+    objects, e.g. the per-answer save buttons) are skipped: those components exist only
+    once a turn has rendered, so test_saved_answer_controls_render_with_the_turn checks them."""
     ids = set()
     for dep in callback.get("inputs", []) + callback.get("state", []):
         if isinstance(dep.get("id"), str):
@@ -43,7 +46,7 @@ def _referenced_ids(callback: dict) -> set:
     for segment in callback["output"].strip(".").split("..."):
         if segment:
             ids.add(segment.rsplit(".", 1)[0].strip("."))
-    return ids
+    return {component_id for component_id in ids if not component_id.startswith("{")}
 
 
 def test_every_callback_id_exists_in_layout(tmp_path):
@@ -159,3 +162,37 @@ def test_reloaded_page_mid_run_keeps_the_question_locked(tmp_path):
     finally:
         release.set()
         runner.wait(timeout=10)
+
+
+# --- saving a final answer as markdown
+
+
+def test_saved_answer_controls_render_with_the_turn(tmp_path):
+    runner = _runner(tmp_path)
+    app = create_app(default_config(), runner, mock=True)
+    web_app._start_turn(runner, default_config(), "First question", ["quick"])
+    runner.wait(timeout=10)
+
+    page = app.layout()
+
+    # the button, the export it saves, and the download that delivers it share one {view, turn}
+    key = {"view": "live", "turn": 0}
+    assert _find(page, {"type": "save-answer", **key}) is not None
+    assert _find(page, {"type": "answer-download", **key}) is not None
+    answer_export = _find(page, {"type": "answer-export", **key}).data
+    assert answer_export["filename"] == "t_web_turn1.md"
+    assert "> First question" in answer_export["text"]
+
+
+@pytest.mark.parametrize("clicks", [None, 0])
+def test_save_answer_ignores_anything_but_a_click(clicks):
+    answer_export = {"filename": "t_turn1.md", "text": "answer"}
+    assert web_app._answer_download(clicks, answer_export) is no_update
+
+
+def test_save_answer_click_downloads_the_markdown():
+    answer_export = {"filename": "t_turn1.md", "text": "**litesquad** | ...\n\nanswer\n"}
+    download = web_app._answer_download(1, answer_export)
+    assert download["filename"] == "t_turn1.md"
+    assert download["content"] == answer_export["text"]
+    assert download["type"] == "text/markdown"

@@ -7,6 +7,8 @@ text is now the turn's fixed question -- and the status board appears beneath
 it. When the turn finishes, the question and answer join the thread and the box
 clears for the follow-up. "New conversation" clears the history and starts a
 new transcript file, so continuing and starting over are both explicit choices.
+Every final answer, in both tabs, has a "Save as markdown" button that downloads
+its question and answer as a .md file (see export.py).
 
 One background thread (the TurnRunner) executes the turn; the page polls a
 dcc.Interval once a second while a run is live. While a turn streams, only the
@@ -14,7 +16,7 @@ progress board updates; the turn's full section renders once, when it finishes.
 The interval is disabled when idle, so an open tab costs nothing between runs.
 """
 
-from dash import Dash, Input, Output, Patch, State, ctx, dcc, html, no_update
+from dash import MATCH, Dash, Input, Output, Patch, State, ctx, dcc, html, no_update
 
 from .. import paths
 from ..config import SquadConfig
@@ -117,7 +119,7 @@ def _refresh(runner: TurnRunner, config: SquadConfig, rendered: int | None) -> d
     if finished > rendered:
         patch = Patch()
         done = [e for e in events if rendered <= e.turn_index < finished]
-        for section in views.turn_sections(done):
+        for section in views.turn_sections(done, runner.transcript_path.name):
             patch.append(section)
         update["results"], update["turns_rendered"] = patch, finished
     if state.running:
@@ -140,6 +142,16 @@ def _refresh(runner: TurnRunner, config: SquadConfig, rendered: int | None) -> d
     }
 
 
+def _answer_download(clicks: int | None, answer_export: dict) -> dict:
+    """Save as markdown: hand that turn's export (built when its card rendered, see
+    views._save_answer_control) to the browser as a .md download. Anything but a real
+    click (n_clicks starts at 0) is ignored, so no render can trigger a surprise download."""
+    if not clicks:
+        return no_update
+    return dcc.send_string(answer_export["text"], answer_export["filename"],
+                           type="text/markdown")
+
+
 def create_app(config: SquadConfig, runner: TurnRunner, *, mock: bool = False) -> Dash:
     app = Dash(__name__, title="litesquad")
 
@@ -158,7 +170,8 @@ def create_app(config: SquadConfig, runner: TurnRunner, *, mock: bool = False) -
             label = views.composer_label(runner.has_history())
             progress = None
         return html.Div([
-            html.Div(id="results", children=views.turn_sections(finished_events)),
+            html.Div(id="results",
+                     children=views.turn_sections(finished_events, runner.transcript_path.name)),
             html.Label(label, id="composer-label", htmlFor="task", style=_COMPOSER_LABEL),
             dcc.Textarea(id="task", placeholder="Type here, then Run",
                          value=state.task if state.running else "",
@@ -263,9 +276,20 @@ def create_app(config: SquadConfig, runner: TurnRunner, *, mock: bool = False) -
                 "No readable events; this file is not in the current transcript format."
             ))
         else:
-            children.extend(views.transcript_view(events))
+            children.extend(views.transcript_view(events, name))
         if skipped:
             children.append(views.notice(f"({skipped} line(s) in an outdated format skipped.)"))
         return children
+
+    # One callback serves every final answer's save button, in both tabs. MATCH pairs a
+    # clicked button with the Store and Download that share its {view, turn} id.
+    @app.callback(
+        Output({"type": "answer-download", "view": MATCH, "turn": MATCH}, "data"),
+        Input({"type": "save-answer", "view": MATCH, "turn": MATCH}, "n_clicks"),
+        State({"type": "answer-export", "view": MATCH, "turn": MATCH}, "data"),
+        prevent_initial_call=True,
+    )
+    def save_answer(clicks, answer_export):
+        return _answer_download(clicks, answer_export)
 
     return app
