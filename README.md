@@ -38,10 +38,8 @@ Offline test: `litesquad --smoke --mock`
 This provides an interface to a swarm of LLMs to try to generate a better answer than when using a single LLM. There is no tool-usage such as web calls from the LLMs. Just reasoning. 
 
 ### To do
-- Add ability to save final answer to md. 
-- Update for newer model versions with newest APIs. 
 - Consider adding web search capabilities to litesquad. 
   - Not clear we want this, as we will likely lose heterogeneity among workers
 
 ### What about Fusion?
-After developing a beta version of litesquad, I found out about OpenRouter's [Fusion](https://openrouter.ai/blog/announcements/fusion-beats-frontier/). Fusion is very similar to litesquad, and is maintained by a professional team. I'm not sure if Fusion is still being maintained, but my guess is there will be lots of tools like this coming online in the near future!
+After developing a beta version of litesquad, I found out about OpenRouter's [Fusion](https://openrouter.ai/blog/announcements/fusion-beats-frontier/). Fusion is very similar to litesquad, and is maintained by a professional team. Fusion may not currently be maintained, but my guess is there will be lots of tools like this coming online in the near future!
