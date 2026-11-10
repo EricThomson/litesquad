@@ -37,9 +37,7 @@ Offline test: `litesquad --smoke --mock`
 ### Caveats
 This provides an interface to a swarm of LLMs to try to generate a better answer than when using a single LLM. There is no tool-usage such as web calls from the LLMs. Just reasoning. 
 
-### To do
-- Consider adding web search capabilities to litesquad. 
-  - Not clear we want this, as we will likely lose heterogeneity among workers
+> I considered adding web search to some of the workers, but the goal is to maximize heterogeneity among workers, and adding web search will dampen this (in addition to going against the grain of a *simple* application).  Hence, for now there is no plan to add web search -- it would be easy to add to a subset of workers, but for now I like the simplicity of things without it. 
 
 ### What about Fusion?
 After developing a beta version of litesquad, I found out about OpenRouter's [Fusion](https://openrouter.ai/blog/announcements/fusion-beats-frontier/). Fusion is very similar to litesquad, and is maintained by a professional team. Fusion may not currently be maintained, but my guess is there will be lots of tools like this coming online in the near future!
