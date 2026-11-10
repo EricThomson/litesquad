@@ -40,8 +40,11 @@ _PRE = {"whiteSpace": "pre-wrap", "fontSize": "0.8rem", "background": "#f6f6f6",
 # scrolls inside its box instead of pushing the answer far down the page.
 _QUESTION = {**_PANEL, "background": "#f0f4fa", "whiteSpace": "pre-wrap",
              "maxHeight": "12rem", "overflowY": "auto"}
-_SAVE_BUTTON = {"marginTop": "0.6rem", "padding": "0.2rem 0.8rem", "fontSize": "0.85rem",
-                "cursor": "pointer"}
+_SAVE_ROW = {"display": "flex", "flexWrap": "wrap", "alignItems": "center", "gap": "0.5rem",
+             "marginTop": "0.6rem"}
+_SAVE_FILENAME = {"width": "22rem", "maxWidth": "100%", "padding": "0.2rem 0.4rem",
+                  "fontSize": "0.85rem", "fontFamily": "inherit"}
+_SAVE_BUTTON = {"padding": "0.2rem 0.8rem", "fontSize": "0.85rem", "cursor": "pointer"}
 
 # One light tint per worker slot (cycled), so everything worker N produced --
 # proposal, its critique, revision -- reads as one card of one color.
@@ -381,22 +384,26 @@ def _question_block(events: list[TranscriptEvent]) -> html.Div:
 
 def _save_answer_control(turn_events: list[TranscriptEvent], transcript_name: str,
                          view: str) -> html.Div:
-    """The final answer's "Save as markdown" button, plus the two pieces it needs on the
+    """The final answer's save controls: an editable filename box (pre-filled with the
+    default name) and the "Save as markdown" button, plus the two pieces they need on the
     page: a Store holding the export (built here, at render time) and the Download that
-    hands it to the browser. app.py's save callback pairs the three by matching ids.
+    hands it to the browser. app.py's save callback pairs all four by matching ids.
 
     The ids carry the view ("live" or "browse") as well as the turn number, because both
     tabs can show the same turn at once and every id on the page must be unique.
     """
     turn = turn_events[0].turn_index
+    default_filename = answer_filename(transcript_name, turn)
     return html.Div([
+        dcc.Input(id={"type": "answer-filename", "view": view, "turn": turn},
+                  type="text", value=default_filename, style=_SAVE_FILENAME),
         html.Button("Save as markdown", n_clicks=0, style=_SAVE_BUTTON,
                     id={"type": "save-answer", "view": view, "turn": turn}),
         dcc.Store(id={"type": "answer-export", "view": view, "turn": turn},
-                  data={"filename": answer_filename(transcript_name, turn),
+                  data={"default_filename": default_filename,
                         "text": answer_markdown(turn_events)}),
         dcc.Download(id={"type": "answer-download", "view": view, "turn": turn}),
-    ])
+    ], style=_SAVE_ROW)
 
 
 def _turn_section(events: list[TranscriptEvent], *, transcript_name: str, view: str,

@@ -175,24 +175,30 @@ def test_saved_answer_controls_render_with_the_turn(tmp_path):
 
     page = app.layout()
 
-    # the button, the export it saves, and the download that delivers it share one {view, turn}
+    # the filename box, button, export, and download all share one {view, turn}
     key = {"view": "live", "turn": 0}
     assert _find(page, {"type": "save-answer", **key}) is not None
     assert _find(page, {"type": "answer-download", **key}) is not None
+    assert _find(page, {"type": "answer-filename", **key}).value == "t_web_turn1.md"
     answer_export = _find(page, {"type": "answer-export", **key}).data
-    assert answer_export["filename"] == "t_web_turn1.md"
+    assert answer_export["default_filename"] == "t_web_turn1.md"
     assert "> First question" in answer_export["text"]
+
+
+ANSWER_EXPORT = {"default_filename": "t_turn1.md", "text": "**litesquad** | ...\n\nanswer\n"}
 
 
 @pytest.mark.parametrize("clicks", [None, 0])
 def test_save_answer_ignores_anything_but_a_click(clicks):
-    answer_export = {"filename": "t_turn1.md", "text": "answer"}
-    assert web_app._answer_download(clicks, answer_export) is no_update
+    assert web_app._answer_download(clicks, ANSWER_EXPORT, "cats.md") is no_update
 
 
-def test_save_answer_click_downloads_the_markdown():
-    answer_export = {"filename": "t_turn1.md", "text": "**litesquad** | ...\n\nanswer\n"}
-    download = web_app._answer_download(1, answer_export)
-    assert download["filename"] == "t_turn1.md"
-    assert download["content"] == answer_export["text"]
+def test_save_answer_click_downloads_under_the_typed_name():
+    download = web_app._answer_download(1, ANSWER_EXPORT, "  cat names ")
+    assert download["filename"] == "cat names.md"
+    assert download["content"] == ANSWER_EXPORT["text"]
     assert download["type"] == "text/markdown"
+
+
+def test_save_answer_with_a_blank_box_uses_the_default_name():
+    assert web_app._answer_download(1, ANSWER_EXPORT, "")["filename"] == "t_turn1.md"

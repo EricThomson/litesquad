@@ -242,7 +242,9 @@ def test_final_answer_carries_a_save_control_unique_to_its_tab():
     events = _fake_turn_events(0)
     live_ids = _pattern_ids(views.turn_sections(events, "t_web.jsonl"))
     browse_ids = _pattern_ids(views.transcript_view(events, "t_web.jsonl"))
-    assert {i["type"] for i in live_ids} == {"save-answer", "answer-export", "answer-download"}
+    assert {i["type"] for i in live_ids} == {
+        "answer-filename", "save-answer", "answer-export", "answer-download"
+    }
     assert all(i["view"] == "live" and i["turn"] == 0 for i in live_ids)
     # both tabs can show the same turn at once, so their ids must never collide
     assert not {tuple(sorted(i.items())) for i in live_ids} & {

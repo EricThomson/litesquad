@@ -4,7 +4,7 @@ from datetime import datetime
 
 import pytest
 
-from litesquad.export import answer_filename, answer_markdown
+from litesquad.export import answer_filename, answer_markdown, tidy_filename
 from litesquad.models import TranscriptEvent
 
 # Built in local time, so the header (which shows local time) reads 13:13 on any machine.
@@ -69,3 +69,19 @@ def test_turn_without_a_final_answer_refuses():
 
 def test_filename_traces_back_to_the_transcript():
     assert answer_filename("2026-10-15_131301_web.jsonl", 1) == "2026-10-15_131301_web_turn2.md"
+
+
+@pytest.mark.parametrize("typed, expected", [
+    ("cat names", "cat names.md"),  # .md added when missing
+    ("  cat names.md  ", "cat names.md"),  # spaces trimmed, no doubled suffix
+    ("Cats.MD", "Cats.MD"),  # the suffix check ignores case
+    ("notes/cats", "cats.md"),  # a typed folder is dropped: the browser picks where
+    (r"C:\Users\me\cats.md", "cats.md"),
+])
+def test_tidy_filename_cleans_what_was_typed(typed, expected):
+    assert tidy_filename(typed, "default.md") == expected
+
+
+@pytest.mark.parametrize("typed", [None, "", "   ", ".", "..", "notes/"])
+def test_tidy_filename_falls_back_when_nothing_usable_is_typed(typed):
+    assert tidy_filename(typed, "default.md") == "default.md"

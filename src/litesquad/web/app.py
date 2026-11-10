@@ -8,7 +8,8 @@ it. When the turn finishes, the question and answer join the thread and the box
 clears for the follow-up. "New conversation" clears the history and starts a
 new transcript file, so continuing and starting over are both explicit choices.
 Every final answer, in both tabs, has a "Save as markdown" button that downloads
-its question and answer as a .md file (see export.py).
+its question and answer as a .md file (see export.py), under the name in the
+editable filename box beside it.
 
 One background thread (the TurnRunner) executes the turn; the page polls a
 dcc.Interval once a second while a run is live. While a turn streams, only the
@@ -20,6 +21,7 @@ from dash import MATCH, Dash, Input, Output, Patch, State, ctx, dcc, html, no_up
 
 from .. import paths
 from ..config import SquadConfig
+from ..export import tidy_filename
 from ..models import TranscriptEvent, load_events_lenient
 from . import views
 from .runner import RunState, TurnRunner
@@ -142,14 +144,15 @@ def _refresh(runner: TurnRunner, config: SquadConfig, rendered: int | None) -> d
     }
 
 
-def _answer_download(clicks: int | None, answer_export: dict) -> dict:
+def _answer_download(clicks: int | None, answer_export: dict, typed_filename: str | None) -> dict:
     """Save as markdown: hand that turn's export (built when its card rendered, see
-    views._save_answer_control) to the browser as a .md download. Anything but a real
-    click (n_clicks starts at 0) is ignored, so no render can trigger a surprise download."""
+    views._save_answer_control) to the browser as a .md download, named from the card's
+    filename box (tidied, or the default if left blank). Anything but a real click
+    (n_clicks starts at 0) is ignored, so no render can trigger a surprise download."""
     if not clicks:
         return no_update
-    return dcc.send_string(answer_export["text"], answer_export["filename"],
-                           type="text/markdown")
+    filename = tidy_filename(typed_filename, answer_export["default_filename"])
+    return dcc.send_string(answer_export["text"], filename, type="text/markdown")
 
 
 def create_app(config: SquadConfig, runner: TurnRunner, *, mock: bool = False) -> Dash:
@@ -282,14 +285,15 @@ def create_app(config: SquadConfig, runner: TurnRunner, *, mock: bool = False) -
         return children
 
     # One callback serves every final answer's save button, in both tabs. MATCH pairs a
-    # clicked button with the Store and Download that share its {view, turn} id.
+    # clicked button with the filename box, Store, and Download that share its {view, turn} id.
     @app.callback(
         Output({"type": "answer-download", "view": MATCH, "turn": MATCH}, "data"),
         Input({"type": "save-answer", "view": MATCH, "turn": MATCH}, "n_clicks"),
         State({"type": "answer-export", "view": MATCH, "turn": MATCH}, "data"),
+        State({"type": "answer-filename", "view": MATCH, "turn": MATCH}, "value"),
         prevent_initial_call=True,
     )
-    def save_answer(clicks, answer_export):
-        return _answer_download(clicks, answer_export)
+    def save_answer(clicks, answer_export, typed_filename):
+        return _answer_download(clicks, answer_export, typed_filename)
 
     return app

@@ -39,6 +39,22 @@ def answer_filename(transcript_name: str, turn_index: int) -> str:
     return f"{Path(transcript_name).stem}_turn{turn_index + 1}.md"
 
 
+def tidy_filename(typed: str | None, default: str) -> str:
+    """The name to save an export under, from what the user typed in its filename box.
+
+    Keeps only the last path part (a typed folder is dropped: the browser decides where
+    downloads go), trims spaces, and adds ".md" when it is missing. Falls back to
+    ``default`` when nothing usable is left. Characters a filesystem forbids are left
+    alone; the browser replaces them when it saves the file.
+    """
+    name = (typed or "").replace("\\", "/").split("/")[-1].strip()
+    if not name.strip("."):  # empty, or only dots like "." and ".."
+        return default
+    if not name.lower().endswith(".md"):
+        name += ".md"
+    return name
+
+
 def _header_line(turn_events: list[TranscriptEvent], final: TranscriptEvent) -> str:
     """When and how the answer was made, in one line, for example
     ``**litesquad** | 2026-10-15 13:13 | squad, 6 workers | judge: anthropic/claude-opus-5.5``.
